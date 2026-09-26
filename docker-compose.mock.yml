@@ -1,0 +1,21 @@
+# llm-metrics — оверлей «мок vLLM»: тестировать стек без реального vLLM.
+#
+#   sudo docker-compose -f docker-compose.yml -f docker-compose.mock.yml \
+#       up -d --build api web vllm-mock
+#
+# * Мок (api/mock/vllm_mock.py) слушает :8000 ТОЛЬКО в compose-сети
+#   (хост-порты не публикует) — реальный vLLM на хосте может работать
+#   дальше без конфликтов.
+# * Конфиг metrics.config.yaml на время мок-теста:
+#     sources.vllm.url: http://vllm-mock:8000
+#     sources.logs[].container: vllm-mock
+# * В main compose сервис vllm при этом НЕ поднимается (указан список
+#   сервисов в up).
+
+services:
+  vllm-mock:
+    build: ./api
+    image: llm-metrics-api:latest
+    container_name: vllm-mock
+    command: ["python", "-m", "mock.vllm_mock", "--port", "8000"]
+    restart: unless-stopped
