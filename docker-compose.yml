@@ -20,8 +20,9 @@ services:
     volumes:
       - ./data:/data
       - ./metrics.config.yaml:/data/metrics.config.yaml:ro
-      # Логи vLLM для лог-индексатора (F3):
-      # - /mnt/storage/vllm:/mnt/storage/vllm:ro
+      # Логи vLLM для лог-индексатора (F3) — раскомментировать, если
+      # sources.logs[].type=file в metrics.config.yaml:
+      - /mnt/storage/vllm:/mnt/storage/vllm:ro
       # для docker-источников логов (sources.logs[].type=docker):
       - /var/run/docker.sock:/var/run/docker.sock
     # NVML: драйвер на хосте + устройства. При >1 GPU добавьте
@@ -34,15 +35,17 @@ services:
     restart: unless-stopped
     # намеренно без ports: — доступ только из compose-сети
 
-  # web (F1 — раскомментировать, когда UI готов):
-  # web:
-  #   build: ./web
-  #   image: llm-metrics-web:latest
-  #   container_name: llm-metrics-web
-  #   depends_on:
-  #     - api
-  #   environment:
-  #     API_URL: http://api:8100
-  #   ports:
-  #     - "3000:3000"
-  #   restart: unless-stopped
+  # web (наружу только :3000; /api/* проксируется Next.js-rewrite на api)
+  web:
+    build:
+      context: ./web
+      args:
+        # rewrite /api/* → apiUrl вычисляется на этапе next build
+        API_URL: http://api:8100
+    image: llm-metrics-web:latest
+    container_name: llm-metrics-web
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
