@@ -5,10 +5,13 @@
 # Требования на хосте:
 #   * NVIDIA-драйвер (устройства + libcuda/libnvidia-ml монтируются ниже;
 #     nvidia-container-toolkit НЕ требуется)
-#   * conda-env 1Cat-vLLM: /home/arkalaust/miniconda3/envs/1cat-vllm-15
-#     + исходники editable-установки /home/arkalaust/1Cat-vLLM
-#   * модель: /mnt/storage/models/Qwen3.8-27B-FP8
-#   * ./metrics.config.yaml — из metrics.config.example.yaml
+#   * conda-env 1Cat-vLLM (собранный vllm + torch cu128) + исходники
+#     editable-установки — пути из .env (VLLM_ENV_DIR, VLLM_SRC_DIR)
+#   * модели — каталог из .env (MODELS_DIR)
+#   * ./metrics.config.yaml — скопировать из metrics.config.example.yaml
+#
+# Портируемый деплой: cp .env.example .env и заполнить пути своего хоста; в
+# самом репо жёстко закодированных путей нет.
 #
 # Перед первым запуском остановить bare-vLLM (~/bin/work-fp8.sh) —
 # он занимает GPU 0-3 и порт 8000.
@@ -30,17 +33,17 @@ services:
       SERVED_NAME: ${SERVED_NAME:-}
       PORT: "8000"
     volumes:
-      # conda-окружение хоста (1Cat-vLLM + torch cu128, read-only) —
-      # тот же, что bare-скрипт ~/bin/work-fp8.sh
-      - /home/arkalaust/miniconda3/envs/1cat-vllm-15:/opt/vllm-env:ro
+      # Пути хоста — из .env (пример: .env.example):
+      # conda-окружение хоста (1Cat-vLLM + torch cu128, read-only)
+      - ${VLLM_ENV_DIR}:/opt/vllm-env:ro
       # исходники editable-установки: .pth в site-packages указывает на ЭТОТ
       # путь — mount-ить обязательно по тому же пути
-      - /home/arkalaust/1Cat-vLLM:/home/arkalaust/1Cat-vLLM:ro
+      - ${VLLM_SRC_DIR}:${VLLM_SRC_DIR}:ro
       # модели хоста (ro); MODEL в .env выбирает, какую грузить
-      - /mnt/storage/models:/mnt/storage/models:ro
+      - ${MODELS_DIR}:/mnt/storage/models:ro
       # драйвер-библиотеки хоста (нужны CUDA в контейнере без toolkit)
-      - /usr/lib/x86_64-linux-gnu/libcuda.so.1:/usr/lib/x86_64-linux-gnu/libcuda.so.1:ro
-      - /usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:ro
+      - ${LIBCUDA_LIB}:/usr/lib/x86_64-linux-gnu/libcuda.so.1:ro
+      - ${LIBNVML_LIB}:/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:ro
     # 4 GPU для TP=4 (устройства драйвера хоста)
     devices:
       - /dev/nvidiactl
@@ -71,7 +74,7 @@ services:
       - ./data:/data
       - ./metrics.config.yaml:/data/metrics.config.yaml:ro
       # NVML-библиотека драйвера с хоста (в slim-образе её нет)
-      - /usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:ro
+      - ${LIBNVML_LIB}:/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:ro
       # docker-сокет: лог-индексатор читает `docker logs vllm`
       - /var/run/docker.sock:/var/run/docker.sock
       # (альтернатива: file-источник логов — смонтировать каталог с nohup.log)
