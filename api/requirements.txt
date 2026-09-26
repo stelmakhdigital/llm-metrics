@@ -1,0 +1,16 @@
+# llm-metrics api — runtime deps
+fastapi>=0.111
+uvicorn[standard]>=0.30
+httpx>=0.27
+pydantic>=2.7
+PyYAML>=6.0
+psutil>=5.9
+aiosqlite>=0.20
+sqlalchemy>=2.0
+alembic>=1.13
+# GPU (NVML) — импортируется defensively, без драйвера приложение живёт
+nvidia-ml-py>=12
+
+# --- dev / tests ---
+pytest>=8
+pytest-asyncio>=0.23
