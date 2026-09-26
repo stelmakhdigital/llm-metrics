@@ -23,7 +23,11 @@ services:
     image: llm-metrics-vllm:latest
     container_name: vllm
     environment:
-      MODEL: /mnt/storage/models/Qwen3.8-27B-FP8
+      # Профиль запуска (docker/vllm/scripts/<имя>.sh) и модель — переключаются
+      # .env (пример: .env.example): VLLM_SCRIPT, MODEL
+      VLLM_SCRIPT: ${VLLM_SCRIPT:-fp8}
+      MODEL: ${MODEL:-/mnt/storage/models/Qwen3.8-27B-FP8}
+      SERVED_NAME: ${SERVED_NAME:-}
       PORT: "8000"
     volumes:
       # conda-окружение хоста (1Cat-vLLM + torch cu128, read-only) —
@@ -32,8 +36,8 @@ services:
       # исходники editable-установки: .pth в site-packages указывает на ЭТОТ
       # путь — mount-ить обязательно по тому же пути
       - /home/arkalaust/1Cat-vLLM:/home/arkalaust/1Cat-vLLM:ro
-      # модель (29 ГБ)
-      - /mnt/storage/models/Qwen3.8-27B-FP8:/mnt/storage/models/Qwen3.8-27B-FP8:ro
+      # модели хоста (ro); MODEL в .env выбирает, какую грузить
+      - /mnt/storage/models:/mnt/storage/models:ro
       # драйвер-библиотеки хоста (нужны CUDA в контейнере без toolkit)
       - /usr/lib/x86_64-linux-gnu/libcuda.so.1:/usr/lib/x86_64-linux-gnu/libcuda.so.1:ro
       - /usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:ro

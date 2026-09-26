@@ -13,8 +13,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends bash ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Вхендр = тот же запуск, что bare-скрипт ~/bin/work-fp8.sh
+# Диспетчер вхендров + профили запуска (scripts/fp8.sh = bare work-fp8.sh)
 COPY entrypoint.sh /entrypoint.sh
+COPY scripts/ /scripts/
 ENTRYPOINT ["/bin/bash", "/entrypoint.sh"]
 
 # /health у vLLM OpenAI-сервера; старт долгий (29 ГБ модель, cudagraphs)
