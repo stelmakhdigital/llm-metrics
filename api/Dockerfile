@@ -18,7 +18,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz \
          | tar xz -C /tmp docker/docker \
-    && install -m 0755 /tmp/docker /usr/local/bin/docker \
+    && install -m 0755 /tmp/docker/docker /usr/local/bin/docker \
     && rm -rf /tmp/docker
 
 COPY app ./app
