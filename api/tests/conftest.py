@@ -48,41 +48,15 @@ def make_app(app_config):
     return _make
 
 
-def seed_samples(db_path, rows, commit=True):
-    """rows: (metric, ts, value, source, gpu, model) — синхронная запись
-    через sqlite3 (для синхронных тестов агрегатора/ретенции, где БД не
-    открыта асинхронно)."""
-    import sqlite3
-
-    c = sqlite3.connect(str(db_path))
-    c.executemany(
-        """INSERT INTO metric_samples (metric, ts, value, source, gpu, model)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        rows,
-    )
-    c.commit()
-    c.close()
+# Хелперы seed — в tests/util.py (импортируются для обратной совместимости)
+from util import seed_log_entries, seed_samples, seed_samples_aio  # noqa: E402,F401
 
 
-async def seed_samples_aio(db, rows) -> None:
-    """То же самое, но через aiosqlite-коннект (async-тесты)."""
-    await db.executemany(
-        """INSERT INTO metric_samples (metric, ts, value, source, gpu, model)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        rows,
-    )
-    await db.commit()
+@pytest.fixture
+def client(make_app, db_path):
+    """FastAPI TestClient с приложением без poller'ов."""
+    from fastapi.testclient import TestClient
 
-
-def seed_log_entries(db_path, rows, commit=True):
-    """rows: (ts_ms, level, line, source) — синхронная запись log_entries."""
-    import sqlite3
-
-    c = sqlite3.connect(str(db_path))
-    c.executemany(
-        "INSERT INTO log_entries (ts, level, line, source) VALUES (?, ?, ?, ?)",
-        rows,
-    )
-    if commit:
-        c.commit()
-    c.close()
+    app = make_app()
+    with TestClient(app) as c:
+        yield c

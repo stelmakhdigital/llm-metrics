@@ -85,6 +85,15 @@ class Cost(BaseModel):
     tokens: TokenRates = TokenRates()
 
 
+class Alerts(BaseModel):
+    """Алерты (F4.1, ТЗ §3.3): вкл/выкл, Telegram-webhook, период проверки."""
+
+    enabled: bool = True
+    # Полный URL Telegram webhook (…/bot<TOKEN>/sendMessage?chat_id=…)
+    telegram_webhook: str | None = None
+    check_interval_s: int = Field(30, ge=5, le=600)
+
+
 class Sources(BaseModel):
     vllm: VllmSource = VllmSource()
     gpus: GpuSource = GpuSource()
@@ -96,6 +105,7 @@ class AppConfig(BaseModel):
     sources: Sources = Sources()
     storage: Storage = Storage()
     cost: Cost = Cost()
+    alerts: Alerts = Alerts()
     # dev-режим: не запускать pollers (используется в тестах)
     start_pollers: bool = True
 

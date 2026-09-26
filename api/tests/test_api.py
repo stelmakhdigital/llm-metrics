@@ -13,13 +13,6 @@ NOW = int(time.time())
 
 
 @pytest.fixture
-def client(make_app, db_path):
-    app = make_app()
-    with TestClient(app) as c:
-        yield c
-
-
-@pytest.fixture
 def live_server(make_app, db_path):
     """Настоящий uvicorn (в тред, случайный порт): TestClient этого starlette
     буферизует ответ целиком и не умеет SSE-стриминг, поэтому /api/live
@@ -264,7 +257,7 @@ def test_live_sse_format_offline(live_server, monkeypatch):
     packets = _read_packets(live_server, 2)
     assert len(packets) == 2
     for p in packets:
-        assert set(p) == {"ts", "sources", "model", "kpi", "gpu_total", "gpus", "system"}
+        assert set(p) == {"ts", "sources", "model", "kpi", "gpu_total", "gpus", "system", "alerts_active"}
         assert set(p["sources"]) == {"vllm", "gpu", "system"}
         for st in p["sources"].values():
             assert st in ("ok", "offline")
@@ -274,6 +267,7 @@ def test_live_sse_format_offline(live_server, monkeypatch):
         assert p["gpu_total"] is None
         assert p["gpus"] is None
         assert p["system"] is None
+        assert p["alerts_active"] == 0
         assert isinstance(p["ts"], int)
 
 

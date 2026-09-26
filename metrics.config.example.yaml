@@ -38,3 +38,10 @@ cost:
     per_million_usd:
       prompt: 0.5
       completion: 1.5
+
+alerts:
+  enabled: true
+  # Полный URL Telegram webhook: https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<CHAT>
+  # (правила и webhook можно менять из UI — вкладка «Алерты»; UI-значения имеют приоритет)
+  telegram_webhook: null
+  check_interval_s: 30

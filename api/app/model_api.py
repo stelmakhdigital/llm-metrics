@@ -74,31 +74,33 @@ def _counter_delta(
 
 
 async def _first_last(
-    db, metrics_prefix_like: str, from_: int, to: int
+    db, metrics_prefix_like: str, from_: int, to: int, model: str | None = None
 ) -> dict[str, tuple[float, float]]:
     """{metric: (первое значение, последнее значение)} в [from, to]."""
+    mfilter = " AND model = ?" if model else ""
+    mparams = [model] if model else []
     first: dict[str, float] = {}
     last: dict[str, float] = {}
     rows = rows_to_dicts(
         await db.execute_fetchall(
-            """SELECT s.metric, s.value FROM metric_samples s
+            f"""SELECT s.metric, s.value FROM metric_samples s
                JOIN (SELECT metric, MIN(ts) AS mt FROM metric_samples
-                     WHERE metric LIKE ? AND ts >= ? AND ts <= ?
+                     WHERE metric LIKE ? AND ts >= ? AND ts <= ?{mfilter}
                      GROUP BY metric) m
                ON s.metric = m.metric AND s.ts = m.mt""",
-            (metrics_prefix_like, from_, to),
+            [metrics_prefix_like, from_, to, *mparams],
         )
     )
     for r in rows:
         first[r["metric"]] = r["value"]
     rows = rows_to_dicts(
         await db.execute_fetchall(
-            """SELECT s.metric, s.value FROM metric_samples s
+            f"""SELECT s.metric, s.value FROM metric_samples s
                JOIN (SELECT metric, MAX(ts) AS mt FROM metric_samples
-                     WHERE metric LIKE ? AND ts >= ? AND ts <= ?
+                     WHERE metric LIKE ? AND ts >= ? AND ts <= ?{mfilter}
                      GROUP BY metric) m
                ON s.metric = m.metric AND s.ts = m.mt""",
-            (metrics_prefix_like, from_, to),
+            [metrics_prefix_like, from_, to, *mparams],
         )
     )
     for r in rows:
@@ -110,14 +112,18 @@ async def _first_last(
     return out
 
 
-async def _raw_points(db, metrics: tuple[str, ...], from_: int, to: int) -> list[float]:
+async def _raw_points(
+    db, metrics: tuple[str, ...], from_: int, to: int, model: str | None = None
+) -> list[float]:
     """Все сырые значения метрик в периоде (одним списком)."""
     ph = ",".join("?" * len(metrics))
+    mfilter = " AND model = ?" if model else ""
+    params = [*metrics, from_, to, *([model] if model else [])]
     rows = rows_to_dicts(
         await db.execute_fetchall(
             f"SELECT value FROM metric_samples "
-            f"WHERE metric IN ({ph}) AND ts >= ? AND ts <= ?",
-            [*metrics, from_, to],
+            f"WHERE metric IN ({ph}) AND ts >= ? AND ts <= ?" + mfilter,
+            params,
         )
     )
     return [r["value"] for r in rows if r["value"] is not None]
@@ -161,21 +167,30 @@ def _empty_response() -> dict[str, Any]:
     }
 
 
-async def build_model_response(db, from_: int, to: int) -> dict[str, Any]:
-    """Сборка ответа GET /api/model за период [from, to]."""
+async def build_model_response(
+    db, from_: int, to: int, model: str | None = None
+) -> dict[str, Any]:
+    """Сборка ответа GET /api/model за период [from, to].
+
+    ``model`` (F4.4): фильтр по метке модели — только сырые данные
+    (hourly/daily метки модели не имеют; глубина = ретенция raw 168ч),
+    raw-расчёт применяется к любому периоду.
+    """
     resp = _empty_response()
     if from_ < 0 or to <= from_:
         return resp
 
     # --- сегментация по метке model (вертикальные линии на графике)
+    mfilter = " AND model = ?" if model else ""
+    mparams = [from_, to, *([model] if model else [])]
     rows = rows_to_dicts(
         await db.execute_fetchall(
-            """SELECT model AS name, MIN(ts) AS from_ts, MAX(ts) AS to_ts
+            f"""SELECT model AS name, MIN(ts) AS from_ts, MAX(ts) AS to_ts
                FROM metric_samples
                WHERE source = 'vllm' AND model IS NOT NULL
-                 AND ts >= ? AND ts <= ?
+                 AND ts >= ? AND ts <= ?{mfilter}
                GROUP BY model ORDER BY from_ts""",
-            (from_, to),
+            mparams,
         )
     )
     resp["models"] = [
@@ -186,11 +201,14 @@ async def build_model_response(db, from_: int, to: int) -> dict[str, Any]:
 
     # --- последние значения (running / waiting / kv_cache)
     async def last_value(metric: str) -> float | None:
+        mfilter = " AND model = ?" if model else ""
+        params = [metric, from_, to, *([model] if model else [])]
         rs = rows_to_dicts(
             await db.execute_fetchall(
                 "SELECT value FROM metric_samples WHERE metric = ? AND ts >= ? AND ts <= ? "
-                "ORDER BY ts DESC LIMIT 1",
-                (metric, from_, to),
+                + mfilter
+                + " ORDER BY ts DESC LIMIT 1",
+                params,
             )
         )
         return rs[0]["value"] if rs else None
@@ -200,21 +218,21 @@ async def build_model_response(db, from_: int, to: int) -> dict[str, Any]:
     kpi["kv_cache"] = await last_value("kv_cache_usage")
 
     span = to - from_
-    if span <= RAW_SPAN_S:
+    if span <= RAW_SPAN_S or model is not None:
         # --- средние rates по сырым точкам
         for key, metric in (
             ("prompt_rate", "prompt_tokens_rate"),
             ("gen_rate", "generation_tokens_rate"),
         ):
-            pts = await _raw_points(db, (metric,), from_, to)
+            pts = await _raw_points(db, (metric,), from_, to, model)
             kpi[key] = sum(pts) / len(pts) if pts else None
 
         # --- квантили по точкам сырых квантилей (p50+p95 объединённо)
         for key, base in (("ttft", "ttft"), ("tpot", "tpot")):
-            pts = await _raw_points(db, (f"{base}_p50", f"{base}_p95"), from_, to)
+            pts = await _raw_points(db, (f"{base}_p50", f"{base}_p95"), from_, to, model)
             kpi[f"{key}_p50"] = quantile_sorted(pts, 0.50)
             kpi[f"{key}_p95"] = quantile_sorted(pts, 0.95)
-        e2e_pts = await _raw_points(db, ("e2e_latency_p50", "e2e_latency_p95"), from_, to)
+        e2e_pts = await _raw_points(db, ("e2e_latency_p50", "e2e_latency_p95"), from_, to, model)
         kpi["e2e_p95"] = quantile_sorted(e2e_pts, 0.95)
     else:
         # --- период >24ч: hourly (avg-колонка для p50/rates, p95-колонка для p95)
@@ -227,7 +245,7 @@ async def build_model_response(db, from_: int, to: int) -> dict[str, Any]:
         kpi["e2e_p95"] = await _hourly_stats(db, "e2e_latency_p95", from_, to, "p95")
 
     # --- счётчики за период (дифф)
-    counters = await _first_last(db, "%", from_, to)
+    counters = await _first_last(db, "%", from_, to, model)
     # finish reasons
     reasons: dict[str, int] = {}
     finished = 0

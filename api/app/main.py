@@ -21,6 +21,9 @@ from fastapi import FastAPI
 
 from . import __version__
 from .aggregator import Aggregator
+from .alerts.engine import AlertEngine
+from .alerts.rules import seed_alert_cfg
+from .api.alerts_routes import router as alerts_router
 from .api.cost import router as cost_router
 from .api.routes import router
 from .api.logs_routes import router as logs_router
@@ -53,12 +56,16 @@ def create_app(
     app.include_router(cost_router)
     app.include_router(settings_router)
     app.include_router(logs_router)
+    app.include_router(alerts_router)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         db = await init_db(cfg.storage.sqlite_path)
         app.state.db = db
         await seed_cost_rates(db, cfg.cost)  # тарифы: стартовая версия из конфига (F2)
+        await seed_alert_cfg(
+            db, enabled=cfg.alerts.enabled, webhook=cfg.alerts.telegram_webhook
+        )  # алерты: стартовое состояние из конфига (F4)
         app.state.statuses = SourceRegistry(
             ("vllm", "gpu", "system")
             + tuple(f"logs.{s.name}" for s in cfg.sources.logs.sources)
@@ -68,6 +75,15 @@ def create_app(
             # соединения (soak: ~каждый 3-й poll «Server disconnected»),
             # повторное использование такого соединения роняет выборку
             limits=httpx.Limits(max_keepalive_connections=0)
+        )
+        # Движок алертов (F4): правила по БД/статусам, Telegram-webhook, журнал
+        app.state.alerts_engine = AlertEngine(
+            db,
+            app.state.statuses,
+            app.state.http,
+            default_enabled=cfg.alerts.enabled,
+            default_webhook=cfg.alerts.telegram_webhook,
+            check_interval_s=cfg.alerts.check_interval_s,
         )
         app.state.gpu_collector = None
         # Кэш последних снимков коллекторов (F1): единая точка чтения для
@@ -148,6 +164,13 @@ def create_app(
                 )
             )
             agg = Aggregator(db, cfg.storage.retention)
+
+            # Алерты (F4): цикл проверки правил (запускать вместе с poller'ами,
+            # без данных условия бессмысленны; тесты — start_pollers=False)
+            await app.state.alerts_engine.restore()
+            tasks.append(
+                asyncio.create_task(app.state.alerts_engine.run(stop))
+            )
 
             async def agg_loop():
                 while not stop.is_set():

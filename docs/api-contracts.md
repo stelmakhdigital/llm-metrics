@@ -16,14 +16,17 @@
             "mem_used_mib": 14620, "mem_total_mib": 16303, "util": 43, "temp": 43,
             "sm_clock_mhz": 1500, "mem_clock_mhz": 1313, "throttle": [],
             "ecc_correctable": 0, "ecc_uncorrectable": 0}],
-  "system": {"cpu": 12.5, "load1": 1.2, "ram_used_mib": 8192, "ram_total_mib": 65536}
+  "system": {"cpu": 12.5, "load1": 1.2, "ram_used_mib": 8192, "ram_total_mib": 65536},
+  "alerts_active": 0
 }
 ```
+- `alerts_active` (F4.1) — число активных алертов (колокольчик в шапке).
 - Источники offline: соответствующий блок = `null`, `sources.X = "offline"`.
 - Данные — последние значения коллекторов (кэш последнего снимка), не новый опрос.
 
-## GET /api/model?from&to
-`from/to` — epoch-сек. Ответ:
+## GET /api/model?from&to[&model]
+`from/to` — epoch-сек. `model` (F4.4) — фильтр по модели: только сырые данные
+(глубина = ретенция raw 168ч), raw-расчёт для любого периода. Ответ:
 ```json
 {
   "models": [{"name": "qwen3.8-27b-dflash2", "from": 1756200000, "to": 1756210000}],
@@ -47,6 +50,24 @@
 - Квантили: p50/p95 — по точкам сырых квантилей за период (точки уже посчитаны при скрейпе интерполяцией по buckets); e2e — p95 из тех же точек. Период >24ч — из hourly (p95-колонка).
 - Графики вкладки «Модель» идут через существующий `/api/metrics/{metric}` (метрики: num_requests_running, num_requests_waiting, prompt_tokens_rate, generation_tokens_rate, ttft_p50, ttft_p95, itl_p50, itl_p95, tpot_p50, tpot_p95, e2e_p95, kv_cache_usage, prefix_hit_rate, preemptions_rate).
 - Для distributions: коллектор vLLM дополнительно хранит кумулятивные счётчики `request_prompt_tokens_bucket_{le}` / `request_generation_tokens_bucket_{le}` (le — из лейблов, без `+Inf`).
+
+## GET /api/model/models (F4.4)
+Исторический список моделей (метка `model` в metric_samples, source=vllm):
+```json
+{"models": [{"name": "qwen3.8-27b-dflash2", "from": 1756200000, "to": 1756210000, "count": 1234}]}
+```
+Свежие первыми (по `to`).
+
+## Алерты (F4.1)
+- `GET /api/alerts?limit=100` → `{"active": [{"rule", "triggered_at"}], "recent": [{"id", "rule", "level", "status", "message", "triggered_at", "resolved_at"}]}` (new-сначала).
+- `POST /api/alerts/test` → тестовое Telegram-сообщение в заданный webhook (400 — не задан/не доставлено).
+- `GET /api/settings/alerts` → `{"enabled": bool, "telegram_webhook": str, "webhook_configured": bool, "rules": [rule]}`.
+- `PUT /api/settings/alerts` → частичное: `{"enabled"?, "telegram_webhook"?, "rules"? (целиком), "reset_rules"? (правила по умолчанию)}`.
+- Rule: `{"id", "title", "level": "warning|critical", "metric"?, "op": ">|<"?, "value"?, "source": "vllm|gpu|system"?, "for_s", "cooldown_s", "enabled"}`.
+- Смысл: нарушение `metric op value` в последних `for_s` с и в последних 120 с (свежие данные); `source` — источник оффлайн ≥ `for_s`. После recovery — пауза `cooldown_s`. Журнал — таблица `alerts` (активные восстанавливаются после рестарта).
+
+## GET /api/health/summary (F4.3)
+Сводный статус для «Health»-страницы: `service` (version/uptime/db/counts), `sources` (статусы + `last_sample_ts`), `model`, `gpus`[] (power/temp/util/mem/throttle/ecc), `system.disks`[] (mount/used_pct), `logs` (errors/critical/warnings за 24ч), `alerts_active`.
 
 ## Кэша последнего снимка
 Коллекторы держат в памяти последний снимок (dataclass/dict) — читают SSE/API без SQL.

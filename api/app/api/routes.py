@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Query, Request
@@ -212,6 +213,112 @@ async def health(request: Request) -> dict[str, Any]:
     }
 
 
+# ------------------------------------------------------------------- health*
+@router.get("/health/summary")
+async def health_summary(request: Request) -> dict[str, Any]:
+    """F4.3 «Health»-страница: сводный статус сервиса/источников/модели/
+    GPU/системы/логов/алертов (без тяжёлых SQL — только последние выборки)."""
+    db = _db(request)
+    db_path = Path(request.app.state.config.storage.sqlite_path)
+    try:
+        db_size_mb = round(db_path.stat().st_size / 1e6, 2) if db_path.exists() else None
+    except OSError:
+        db_size_mb = None
+
+    counts: dict[str, int | None] = {}
+    for table in ("metric_samples", "log_entries"):
+        try:
+            r = await db.execute_fetchall(f"SELECT COUNT(*) AS n FROM {table}")
+            counts[table] = r[0]["n"] if r else None
+        except Exception:  # noqa: BLE001
+            counts[table] = None
+
+    # последний замер по каждому основному источнику
+    last_rows = rows_to_dicts(
+        await db.execute_fetchall(
+            "SELECT source, MAX(ts) AS ts FROM metric_samples GROUP BY source"
+        )
+    )
+    last_sample = {r["source"]: r["ts"] for r in last_rows}
+
+    model = await _latest_model(request)
+
+    gpus = []
+    snap = request.app.state.snapshots.get("gpu") if _src_ok(request.app.state.statuses, "gpu") else None
+    if snap:
+        for g in snap.get("gpus", {}).values():
+            gpus.append(
+                {
+                    "id": g.get("id"),
+                    "name": g.get("name"),
+                    "power_w": g.get("power_w"),
+                    "temp_c": g.get("temp"),
+                    "util_pct": g.get("util"),
+                    "mem_used_pct": (
+                        round(g["mem_used_mib"] / g["mem_total_mib"] * 100, 1)
+                        if g.get("mem_used_mib") is not None and g.get("mem_total_mib")
+                        else None
+                    ),
+                    "throttle": _throttle_names(g.get("throttle")),
+                    "ecc_uncorrectable": g.get("ecc_uncorrectable"),
+                }
+            )
+
+    # диски: последние выборки disk_used_pct|*
+    disk_rows = await db.execute_fetchall(
+        """SELECT s.metric, s.value FROM metric_samples s
+           JOIN (SELECT metric, MAX(ts) AS mt FROM metric_samples
+                 WHERE metric LIKE 'disk_used_pct|%' AND ts >= ?
+                 GROUP BY metric) m
+           ON s.metric = m.metric AND s.ts = m.mt""",
+        (int(time.time()) - 600,),
+    )
+    system_block: dict[str, Any] = {"disks": []}
+    for r in disk_rows:
+        system_block["disks"].append(
+            {"mount": r["metric"].split("|", 1)[1], "used_pct": r["value"]}
+        )
+
+    # логи: ошибки/предупреждения за 24ч
+    now = int(time.time())
+    log_rows = rows_to_dicts(
+        await db.execute_fetchall(
+            """SELECT level, COUNT(*) AS n FROM log_entries
+               WHERE ts >= ? AND level IN ('ERROR','CRITICAL','WARNING')
+               GROUP BY level""",
+            ((now - 86400) * 1000,),
+        )
+    )
+    logs = {"errors_24h": 0, "critical_24h": 0, "warnings_24h": 0}
+    for r in log_rows:
+        if r["level"] == "ERROR":
+            logs["errors_24h"] = r["n"]
+        elif r["level"] == "CRITICAL":
+            logs["critical_24h"] = r["n"]
+        else:
+            logs["warnings_24h"] = r["n"]
+
+    engine = getattr(request.app.state, "alerts_engine", None)
+    return {
+        "service": {
+            "version": __version__,
+            "uptime_s": round(time.time() - request.app.state.started_at, 1),
+            "db_path": db_path,
+            "db_size_mb": db_size_mb,
+            "counts": counts,
+        },
+        "sources": {
+            **request.app.state.statuses.to_dict(),
+            "last_sample_ts": last_sample,
+        },
+        "model": model,
+        "gpus": gpus,
+        "system": system_block,
+        "logs": logs,
+        "alerts_active": engine.active_count() if engine else 0,
+    }
+
+
 # -------------------------------------------------------------------- metrics
 @router.get("/metrics/{metric}")
 async def metric_series(
@@ -220,6 +327,7 @@ async def metric_series(
     from_: int | None = Query(None, alias="from"),
     to: int | None = None,
     gpu: int | None = None,
+    model: str | None = None,
 ) -> dict[str, Any]:
     """Точки графика. Выбор источника (ТЗ §4/§8.3):
 
@@ -237,6 +345,23 @@ async def metric_series(
         return {"metric": metric, "source": None, "count": 0, "points": []}
     span = to - from_
     db = _db(request)
+    if model is not None:
+        # F4.4: фильтр по модели — только сырые (hourly/daily метки не имеют;
+        # глубина — ретенция raw, 168ч). Пустой результат — пустой ответ.
+        rows = rows_to_dicts(
+            await db.execute_fetchall(
+                "SELECT ts, value FROM metric_samples "
+                "WHERE metric = ? AND model = ? AND ts >= ? AND ts <= ? ORDER BY ts",
+                (metric, model, from_, to),
+            )
+        )
+        points = [[r["ts"], r["value"]] for r in rows]
+        return {
+            "metric": metric,
+            "source": "raw" if points else None,
+            "count": len(points),
+            "points": downsample(points),
+        }
     if span <= RAW_MAX_SPAN_S:
         sql = (
             "SELECT ts, value FROM metric_samples "
@@ -431,12 +556,36 @@ async def model_period(
     request: Request,
     from_: int | None = Query(None, alias="from"),
     to: int | None = None,
+    model: str | None = None,
 ) -> dict[str, Any]:
-    """KPI за период по метрикам vLLM (docs/api-contracts.md, ТЗ §5.2)."""
+    """KPI за период по метрикам vLLM (docs/api-contracts.md, ТЗ §5.2).
+
+    ``model`` (F4.4) — фильтр по модели: период считается только по данным
+    этой модели (сырые данные, глубина = ретенция 168ч).
+    """
     now = int(time.time())
     to = to if to is not None else now
     from_ = from_ if from_ is not None else to - 3600
-    return await build_model_response(_db(request), from_, to)
+    return await build_model_response(_db(request), from_, to, model=model)
+
+
+@router.get("/model/models")
+async def model_list(request: Request) -> dict[str, Any]:
+    """F4.4: исторический список моделей (сегментация метки ``model``)."""
+    rows = rows_to_dicts(
+        await _db(request).execute_fetchall(
+            """SELECT model AS name, MIN(ts) AS from_ts, MAX(ts) AS to_ts, COUNT(*) AS n
+               FROM metric_samples
+               WHERE source = 'vllm' AND model IS NOT NULL
+               GROUP BY model ORDER BY to_ts DESC"""
+        )
+    )
+    return {
+        "models": [
+            {"name": r["name"], "from": r["from_ts"], "to": r["to_ts"], "count": r["n"]}
+            for r in rows
+        ]
+    }
 
 
 # ------------------------------------------------------------------------ live
@@ -536,6 +685,11 @@ def _build_live_packet(request: Request) -> dict[str, Any]:
         "gpu_total": gpu_total,
         "gpus": gpus,
         "system": system,
+        "alerts_active": (
+            request.app.state.alerts_engine.active_count()
+            if getattr(request.app.state, "alerts_engine", None)
+            else 0
+        ),
     }
 
 

@@ -77,4 +77,16 @@ SCHEMA_STATEMENTS: list[str] = [
         pci_bus TEXT
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS alerts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        rule TEXT    NOT NULL,  -- id правила
+        level TEXT   NOT NULL,  -- warning | critical
+        status TEXT  NOT NULL,  -- active | resolved
+        message TEXT NOT NULL,
+        triggered_at INTEGER NOT NULL,  -- epoch-с UTC
+        resolved_at INTEGER               -- NULL пока активна
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_alerts_status ON alerts(status, triggered_at)",
 ]
