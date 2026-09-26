@@ -11,6 +11,16 @@ WORKDIR /srv
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# docker CLI (статический бинарник) — лог-индексатор читает `docker logs vllm`
+# (sources.logs[].type=docker, сокет /var/run/docker.sock монтируется в compose)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz \
+         | tar xz -C /tmp docker/docker \
+    && install -m 0755 /tmp/docker /usr/local/bin/docker \
+    && rm -rf /tmp/docker
+
 COPY app ./app
 COPY migrations ./migrations
 COPY alembic.ini .

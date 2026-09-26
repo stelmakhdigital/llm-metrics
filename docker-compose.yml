@@ -1,41 +1,91 @@
-# llm-metrics — прод-деплой на сервере с vLLM (ТЗ §8)
+# llm-metrics — прод-деплой: vLLM (1Cat-vLLM, 4xV100) + api + web (ТЗ §8)
 #
 #   docker compose up -d --build
 #
 # Требования на хосте:
-#   * vLLM запущен на :8000 (см. metrics.config.example.yaml)
-#   * NVIDIA-драйвер (для NVML-опроса)
-#   * ./metrics.config.yaml — скопирован из metrics.config.example.yaml
-#     и смонтирован в /data (только-чтение для контейнера)
+#   * NVIDIA-драйвер (устройства + libcuda/libnvidia-ml монтируются ниже;
+#     nvidia-container-toolkit НЕ требуется)
+#   * conda-env 1Cat-vLLM: /home/arkalaust/miniconda3/envs/1cat-vllm-15
+#     + исходники editable-установки /home/arkalaust/1Cat-vLLM
+#   * модель: /mnt/storage/models/Qwen3.8-27B-FP8
+#   * ./metrics.config.yaml — из metrics.config.example.yaml
 #
-# Безопасность (ТЗ §8.4): порт 8100 API на хост НЕ публикуется —
-# наружу только web:3000, /api/* проксируется Next.js-rewrite'ом на api.
+# Перед первым запуском остановить bare-vLLM (~/bin/work-fp8.sh) —
+# он занимает GPU 0-3 и порт 8000.
+#
+# Порты: наружу web:3000 и vllm:8000 (как при bare-запуске);
+# API (8100) только в compose-сети, /api/* — через Next.js-rewrite.
 services:
+  # ------------------------------------------------------------- vLLM (TP=4)
+  vllm:
+    build:
+      context: ./docker/vllm
+    image: llm-metrics-vllm:latest
+    container_name: vllm
+    environment:
+      MODEL: /mnt/storage/models/Qwen3.8-27B-FP8
+      PORT: "8000"
+    volumes:
+      # conda-окружение хоста (1Cat-vLLM + torch cu128, read-only) —
+      # тот же, что bare-скрипт ~/bin/work-fp8.sh
+      - /home/arkalaust/miniconda3/envs/1cat-vllm-15:/opt/vllm-env:ro
+      # исходники editable-установки: .pth в site-packages указывает на ЭТОТ
+      # путь — mount-ить обязательно по тому же пути
+      - /home/arkalaust/1Cat-vLLM:/home/arkalaust/1Cat-vLLM:ro
+      # модель (29 ГБ)
+      - /mnt/storage/models/Qwen3.8-27B-FP8:/mnt/storage/models/Qwen3.8-27B-FP8:ro
+      # драйвер-библиотеки хоста (нужны CUDA в контейнере без toolkit)
+      - /usr/lib/x86_64-linux-gnu/libcuda.so.1:/usr/lib/x86_64-linux-gnu/libcuda.so.1:ro
+      - /usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:ro
+    # 4 GPU для TP=4 (устройства драйвера хоста)
+    devices:
+      - /dev/nvidiactl
+      - /dev/nvidia0
+      - /dev/nvidia1
+      - /dev/nvidia2
+      - /dev/nvidia3
+      - /dev/nvidia-uvm
+      - /dev/nvidia-uvm-tools
+    # NCCL/TP=4 и --mm-processor-cache-type shm требуют большого /dev/shm
+    shm_size: "32g"
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  # ------------------------------------------------------------------ api
   api:
     build: ./api
     image: llm-metrics-api:latest
     container_name: llm-metrics-api
     environment:
       METRICS_CONFIG: /data/metrics.config.yaml
+    # vLLM в соседнем контейнере: vllm.url = http://vllm:8000
+    # (vllm на хосте вне compose: http://host.docker.internal:8000)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/data
       - ./metrics.config.yaml:/data/metrics.config.yaml:ro
-      # Логи vLLM для лог-индексатора (F3) — раскомментировать, если
-      # sources.logs[].type=file в metrics.config.yaml:
-      - /mnt/storage/vllm:/mnt/storage/vllm:ro
-      # для docker-источников логов (sources.logs[].type=docker):
+      # NVML-библиотека драйвера с хоста (в slim-образе её нет)
+      - /usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:ro
+      # docker-сокет: лог-индексатор читает `docker logs vllm`
       - /var/run/docker.sock:/var/run/docker.sock
-    # NVML: драйвер на хосте + устройства. При >1 GPU добавьте
-    # /dev/nvidia1, /dev/nvidia2, ...
+      # (альтернатива: file-источник логов — смонтировать каталог с nohup.log)
+      # - /mnt/storage/vllm:/mnt/storage/vllm:ro
+    # все 5 GPU хоста: 4xV100 (vllm) + RTX 2060 (llm-metrics)
     devices:
       - /dev/nvidiactl
       - /dev/nvidia0
+      - /dev/nvidia1
+      - /dev/nvidia2
+      - /dev/nvidia3
+      - /dev/nvidia4
       - /dev/nvidia-uvm
       - /dev/nvidia-uvm-tools
     restart: unless-stopped
     # намеренно без ports: — доступ только из compose-сети
 
-  # web (наружу только :3000; /api/* проксируется Next.js-rewrite на api)
+  # ------------------------------------------------------------------ web
   web:
     build:
       context: ./web
