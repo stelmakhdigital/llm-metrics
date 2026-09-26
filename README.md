@@ -8,6 +8,8 @@
 Prod (сервер с vLLM): `docker compose up -d --build` (web :3000, API без
 публичного порта — `/api/*` проксирует Next.js). Конфиг: скопировать
 `metrics.config.example.yaml` → `./metrics.config.yaml` и отредактировать.
+Подробная инструкция (установка, Telegram-алерты, эксплуатация) —
+[`docs/DEPLOY.md`](docs/DEPLOY.md).
 При обновлении схемы БД: `cd api && alembic upgrade head` (миграции в
 `api/migrations`; старая БД поднимается и авто-bootstrap-ом — `CREATE TABLE
 IF NOT EXISTS`).
