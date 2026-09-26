@@ -37,8 +37,8 @@
 ## Статус (обновлять)
 - F0–F3 реализованы (2026-09-26): бек 90 тестов (pytest), web build ✓ / eslint 0.
 - Сквозной прогон подтверждён: все 6 вкладок 200 через прокси :3000, SSE live, /api/model, /api/cost (не нулевой на реальном трафике), логи offline (файла нет локально — ожидаемо), GPU/vllm/system online.
-- Коммиты: НЕДЕЛАНЫ — ждём явной команды; при коммите отметить [x] в roadmap.md.
-- api/dev.config.yaml — untracked-артефакт dev (в .gitignore проверить при коммите; содержит локальный путь к БД).
+- Коммиты сделаны (2026-09-26, автор arkalaust@local, repo-level git config): cb81263 chore F0.1/F0.7/F0.8 → 7d836bb feat(api) F0/F2/F3-бэкенд → 8e14bc5 feat(web) F1 → e633ae3 feat(web) F2 → 221e153 feat(web) F3 → docs (roadmap). Api — один коммит: main.py импортирует cost/logs-роутеры, фазовый split дал бы некомпильные промежуточные коммиты.
+- api/dev.config.yaml — untracked-артефакт dev, теперь в .gitignore (dev.config.yaml).
 - Зависимость: `test_cost.py` при параллельном запуске с F3 вешался (порт/БД?), в одиночку 90 passed 1.5s — ок.
 
 ## Соглашения
