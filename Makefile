@@ -1,7 +1,8 @@
 # llm-metrics: dev-задачи (без docker) + прод (docker compose)
 VENV     := api/.venv
 PY       := $(VENV)/bin/python
-COMPOSE  := docker compose
+# docker compose (v2) если есть, иначе docker-compose (v1); переопределяется: make COMPOSE=...
+COMPOSE  ?= $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo docker-compose)
 MOCK_F   := -f docker-compose.yml -f docker-compose.mock.yml
 
 .PHONY: setup dev-api dev-web mock-vllm test-api alembic

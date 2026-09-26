@@ -1,6 +1,9 @@
 # llm-metrics — прод-деплой: vLLM (1Cat-vLLM, 4xV100) + api + web (ТЗ §8)
 #
-#   docker compose up -d --build
+#   make start   (или: docker compose up -d --build)
+# `version:` обязателен — на сервере docker-compose v1.29.2 без него файл
+# отвергает ("Compose specification is not supported").
+version: "3.8"
 #
 # Требования на хосте:
 #   * NVIDIA-драйвер (устройства + libcuda/libnvidia-ml монтируются ниже;
