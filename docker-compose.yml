@@ -1,0 +1,48 @@
+# llm-metrics — прод-деплой на сервере с vLLM (ТЗ §8)
+#
+#   docker compose up -d --build
+#
+# Требования на хосте:
+#   * vLLM запущен на :8000 (см. metrics.config.example.yaml)
+#   * NVIDIA-драйвер (для NVML-опроса)
+#   * ./metrics.config.yaml — скопирован из metrics.config.example.yaml
+#     и смонтирован в /data (только-чтение для контейнера)
+#
+# Безопасность (ТЗ §8.4): порт 8100 API на хост НЕ публикуется —
+# наружу только web:3000, /api/* проксируется Next.js-rewrite'ом на api.
+services:
+  api:
+    build: ./api
+    image: llm-metrics-api:latest
+    container_name: llm-metrics-api
+    environment:
+      METRICS_CONFIG: /data/metrics.config.yaml
+    volumes:
+      - ./data:/data
+      - ./metrics.config.yaml:/data/metrics.config.yaml:ro
+      # Логи vLLM для лог-индексатора (F3):
+      # - /mnt/storage/vllm:/mnt/storage/vllm:ro
+      # для docker-источников логов (sources.logs[].type=docker):
+      - /var/run/docker.sock:/var/run/docker.sock
+    # NVML: драйвер на хосте + устройства. При >1 GPU добавьте
+    # /dev/nvidia1, /dev/nvidia2, ...
+    devices:
+      - /dev/nvidiactl
+      - /dev/nvidia0
+      - /dev/nvidia-uvm
+      - /dev/nvidia-uvm-tools
+    restart: unless-stopped
+    # намеренно без ports: — доступ только из compose-сети
+
+  # web (F1 — раскомментировать, когда UI готов):
+  # web:
+  #   build: ./web
+  #   image: llm-metrics-web:latest
+  #   container_name: llm-metrics-web
+  #   depends_on:
+  #     - api
+  #   environment:
+  #     API_URL: http://api:8100
+  #   ports:
+  #     - "3000:3000"
+  #   restart: unless-stopped

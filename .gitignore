@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# БД и локальные данные
+*.db
+*.db-wal
+*.db-shm
+data/
+
+# Локальные dev-конфиги (не для прод)
+*.local.yaml
+dev.config.yaml
+
+# Node
+node_modules/
+.next/
+
+# Логи
+*.log
+
+# инструментальные артефакты
+.memory/
+graft/
