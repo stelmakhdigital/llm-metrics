@@ -18,7 +18,7 @@ docker-compose.yml, Dockerfile.*
 ## Команды (dev, без docker)
 - `make dev-api` / `make dev-web` — uvicorn + next dev
 - `make mock-vllm` — мок vLLM-метрик (порт 8000) для отладки
-- Тесты: `cd api && pytest`, `cd web && npm test`
+- Тесты: `cd api && pytest` (или `make test-api`); web — `cd web && npm run build` (build+lint+types; test-скрипта нет)
 
 ## Ключевые инварианты
 - Сбой источника не роняет сбор остальных; пропуски данных — разрывы в графиках, не 0.
