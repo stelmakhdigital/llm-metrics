@@ -37,6 +37,7 @@
 ## Статус (обновлять)
 - F0–F4 реализованы (2026-09-26): бек 102 теста (pytest), web build ✓ / eslint 0.
 - F4 (выбранный scope; PDU отброшен — нет реального счётчика): алерты (движок 30с, Telegram webhook, журнал `alerts`, cooldown/restore, вкладка «Алерты»), экспорт CSV/PNG графиков, вкладка «Health», multi-модель (селектор в шапке, фильтр /api/model + /api/metrics по метке model, только raw/168ч).
+- Деплой: docs/DEPLOY.md (инструкция); compose — web-сервис включён (ARG API_URL в web/Dockerfile, rewrite на этапе build), /mnt/storage/vllm:ro раскомментирован.
 - Миграция 0002_alerts (alembic head); alerts seed в settings key=`alert_rules` (дефолты из кода, UI имеет приоритет над конфигом `alerts.*`).
 - Нюанс web: установленная сборка uPlot 1.6.32 не имеет `toDataURL` — PNG-экспорт рисует график сам на canvas (metric-chart.tsx).
 - Сквозной прогон F4: алерт src_vllm (offline→trigger→mock→resolve) ✓, /api/health/summary ✓, /api/model/models ✓, все 8 вкладок 200.
