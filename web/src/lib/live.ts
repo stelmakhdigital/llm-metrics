@@ -28,6 +28,8 @@ export type LivePacket = {
   gpu_total: { power_w: number; mem_used_mib: number; mem_total_mib: number } | null;
   gpus: GpuSnapshot[] | null;
   system: Record<string, number> | null;
+  /** F4.1: число активных алертов (колокольчик в шапке) */
+  alerts_active: number;
 };
 
 /** Точка суммарной мощности (ring buffer ~5 минут). */

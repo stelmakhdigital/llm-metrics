@@ -2,6 +2,7 @@
 
 import type { ChartMark } from "@/components/charts/marked-uplot";
 import { usePeriod } from "@/lib/periods";
+import { useModel } from "@/lib/model-context";
 import {
   modelUrl,
   PALETTE,
@@ -59,8 +60,9 @@ function modelMarks(models: ModelSegment[]): ChartMark[] {
  */
 export function ModelPeriod() {
   const { period, from, to } = usePeriod();
+  const { model } = useModel();
   const rangeOk = from != null && to != null && to > from;
-  const url = rangeOk ? modelUrl(from, to) : null;
+  const url = rangeOk ? modelUrl(from, to, model) : null;
   const { data, loading, error } = usePoll<ModelData>(url, 0);
 
   if (!rangeOk) {
@@ -91,6 +93,12 @@ export function ModelPeriod() {
             <ModelBadges models={data.models} />
           )}
 
+          {model != null && (
+            <InfoBanner
+              message={`Фильтр по модели «${model}»: показаны только данные этой модели (сырые данные, глубина — 168 ч).`}
+            />
+          )}
+
           {kpi != null ? (
             <KpiGrid cards={periodKpiCards(kpi, spanSec)} />
           ) : !error ? (
@@ -118,6 +126,7 @@ export function ModelPeriod() {
               from={from as number}
               to={to as number}
               marks={marks}
+              model={model}
             />
             <MetricChart
               title="ITL / TPOT, с"
@@ -125,6 +134,7 @@ export function ModelPeriod() {
               from={from as number}
               to={to as number}
               marks={marks}
+              model={model}
             />
             <MetricChart
               title="E2E latency p95, с"
@@ -132,6 +142,7 @@ export function ModelPeriod() {
               from={from as number}
               to={to as number}
               marks={marks}
+              model={model}
             />
             <MetricChart
               title="Throughput, токены/с"
@@ -139,6 +150,7 @@ export function ModelPeriod() {
               from={from as number}
               to={to as number}
               marks={marks}
+              model={model}
             />
             <MetricChart
               title="KV cache usage"
@@ -146,6 +158,7 @@ export function ModelPeriod() {
               from={from as number}
               to={to as number}
               marks={marks}
+              model={model}
               note="Значение — как хранит коллектор (доля 0..1 или % — уточняется бэком)."
             />
             <MetricChart
@@ -154,6 +167,7 @@ export function ModelPeriod() {
               from={from as number}
               to={to as number}
               marks={marks}
+              model={model}
             />
             <MetricChart
               title="Prefix cache hit rate"
@@ -161,6 +175,7 @@ export function ModelPeriod() {
               from={from as number}
               to={to as number}
               marks={marks}
+              model={model}
             />
           </div>
         </>

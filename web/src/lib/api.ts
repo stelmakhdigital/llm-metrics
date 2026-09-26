@@ -54,8 +54,15 @@ export interface MetricResponse {
   points: [number, number | null][];
 }
 
-export function metricUrl(metric: string, from: number, to: number): string {
-  return `/api/metrics/${encodeURIComponent(metric)}?from=${from}&to=${to}`;
+export function metricUrl(
+  metric: string,
+  from: number,
+  to: number,
+  model?: string | null,
+): string {
+  let u = `/api/metrics/${encodeURIComponent(metric)}?from=${from}&to=${to}`;
+  if (model) u += `&model=${encodeURIComponent(model)}`;
+  return u;
 }
 
 // ------------------------------------------------------------------ /api/model
@@ -96,9 +103,21 @@ export interface ModelData {
   } | null;
 }
 
-export function modelUrl(from: number, to: number): string {
-  return `/api/model?from=${from}&to=${to}`;
+export function modelUrl(from: number, to: number, model?: string | null): string {
+  let u = `/api/model?from=${from}&to=${to}`;
+  if (model) u += `&model=${encodeURIComponent(model)}`;
+  return u;
 }
+
+/** Историческая модель (GET /api/model/models, F4.4). */
+export interface ModelInfo {
+  name: string;
+  from: number;
+  to: number;
+  count: number;
+}
+
+export const MODELS_URL = "/api/model/models";
 
 // -------------------------------------------------------------- /api/cost
 
@@ -320,3 +339,98 @@ export function logsExportUrl(
 
 export const LOGS_SOURCES_URL = "/api/logs/sources";
 export const LOGS_LIVE_URL = "/api/logs/live";
+
+// ------------------------------------------------------------------ /api/alerts (F4.1)
+
+export interface AlertRule {
+  id: string;
+  title: string;
+  level: "warning" | "critical";
+  metric: string | null;
+  op: ">" | "<" | null;
+  value: number | null;
+  source: "vllm" | "gpu" | "system" | null;
+  for_s: number;
+  cooldown_s: number;
+  enabled: boolean;
+}
+
+export interface AlertsSettings {
+  enabled: boolean;
+  telegram_webhook: string;
+  webhook_configured: boolean;
+  rules: AlertRule[];
+}
+
+export interface AlertEvent {
+  id: number;
+  rule: string;
+  level: string;
+  status: "active" | "resolved";
+  message: string;
+  triggered_at: number;
+  resolved_at: number | null;
+}
+
+export interface AlertsData {
+  /** активные: {rule, triggered_at} */
+  active: { rule: string; triggered_at: number }[];
+  recent: AlertEvent[];
+}
+
+export const ALERTS_URL = "/api/alerts";
+export const ALERTS_SETTINGS_URL = "/api/settings/alerts";
+export const ALERTS_TEST_URL = "/api/alerts/test";
+
+/** PUT /api/settings/alerts — частичное обновление. */
+export interface AlertsUpdate {
+  enabled?: boolean;
+  telegram_webhook?: string | null;
+  rules?: AlertRule[];
+  reset_rules?: boolean;
+}
+
+export async function putAlertsSettings(body: AlertsUpdate): Promise<{ updated_at: number }> {
+  return putJson(ALERTS_SETTINGS_URL, body);
+}
+
+export async function testAlerts(): Promise<{ ok: boolean; message: string }> {
+  const res = await fetch(ALERTS_TEST_URL, { method: "POST", cache: "no-store" });
+  const j = (await res.json()) as { ok?: boolean; detail?: string };
+  if (!res.ok) throw new Error(j.detail ?? `HTTP ${res.status}`);
+  return j as { ok: boolean; message: string };
+}
+
+// ---------------------------------------------------------- /api/health (F4.3)
+
+export interface HealthSummary {
+  service: {
+    version: string;
+    uptime_s: number;
+    db_path: string;
+    db_size_mb: number | null;
+    counts: Record<string, number | null>;
+  };
+  sources: Record<string, {
+    status: string;
+    last_ok_ts: number | null;
+    last_poll_ts: number | null;
+    last_error: string | null;
+  }> & { last_sample_ts: Record<string, number | null> };
+  model: string | null;
+  gpus: {
+    id: number | null;
+    name: string | null;
+    power_w: number | null;
+    temp_c: number | null;
+    util_pct: number | null;
+    mem_used_pct: number | null;
+    throttle: string[];
+    ecc_uncorrectable: number | null;
+  }[];
+  system: { disks: { mount: string; used_pct: number }[] };
+  logs: { errors_24h: number; critical_24h: number; warnings_24h: number };
+  alerts_active: number;
+}
+
+export const HEALTH_SUMMARY_URL = "/api/health/summary";

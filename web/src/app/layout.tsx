@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { PeriodProvider } from "@/lib/periods";
+import { ModelProvider } from "@/lib/model-context";
 
 export const metadata: Metadata = {
   title: "llm-metrics",
@@ -16,7 +17,9 @@ export default function RootLayout({
   return (
     <html lang="ru">
       <body className="min-h-screen bg-background font-sans text-foreground antialiased">
-        <PeriodProvider>{children}</PeriodProvider>
+        <PeriodProvider>
+          <ModelProvider>{children}</ModelProvider>
+        </PeriodProvider>
       </body>
     </html>
   );

@@ -48,16 +48,18 @@ export function LegendChips({
   );
 }
 
-/** Карточка-график: заголовок, легенда, содержимое. */
+/** Карточка-график: заголовок, легенда, действия (экспорт и т.п.), содержимое. */
 export function ChartCard({
   title,
   legend,
+  actions,
   note,
   children,
   className,
 }: {
   title: string;
   legend?: ReactNode;
+  actions?: ReactNode;
   note?: ReactNode;
   children: ReactNode;
   className?: string;
@@ -66,7 +68,10 @@ export function ChartCard({
     <div className={cn("rounded-xl border border-line bg-panel p-3", className)}>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-1">
         <div className="text-sm font-medium">{title}</div>
-        {legend}
+        <div className="flex items-center gap-2">
+          {legend}
+          {actions}
+        </div>
       </div>
       {children}
       {note != null && note !== "" && <div className="mt-1 text-xs text-muted">{note}</div>}

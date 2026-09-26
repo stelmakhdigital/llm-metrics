@@ -9,6 +9,8 @@ import {
   DollarSign,
   ScrollText,
   Settings,
+  Bell,
+  HeartPulse,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -19,6 +21,8 @@ const NAV: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/system", label: "Система", icon: Server },
   { href: "/cost", label: "Стоимость", icon: DollarSign },
   { href: "/logs", label: "Логи", icon: ScrollText },
+  { href: "/alerts", label: "Алерты", icon: Bell },
+  { href: "/health", label: "Health", icon: HeartPulse },
 ];
 
 function NavItem({ href, label, icon: Icon }: (typeof NAV)[number]) {
