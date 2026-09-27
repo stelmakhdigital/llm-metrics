@@ -6,7 +6,7 @@ COMPOSE  ?= $(shell docker compose version >/dev/null 2>&1 && echo "docker compo
 MOCK_F   := -f docker-compose.yml -f docker-compose.mock.yml
 
 .PHONY: setup dev-api dev-web mock-vllm test-api alembic
-.PHONY: start down rebuild logs ps mock-start mock-down build install-toolkit gpu-check all
+.PHONY: start down rebuild logs ps mock-start mock-down build build-bg install-toolkit gpu-check all
 
 # venv + зависимости API
 setup:
@@ -65,6 +65,12 @@ all: install-toolkit up
 # Пин версии vLLM: docker compose build --build-arg VLLM_REF=<git sha> vllm
 build:
 	$(COMPOSE) build
+
+# Тот же build, но в фоне (переживает обрыв ssh); прогресс: tail -f build.log.
+# Если сборка упала: grep -nE "error:|Error|Killed|status 137" build.log | tail
+build-bg:
+	set -o pipefail; nohup $(COMPOSE) build --progress=plain 2>&1 | tee build.log >/dev/null &
+	echo "build в фоне (PID $$!); следите: tail -f build.log"
 
 # Поднять стек (без пересборки; образы — make build)
 start:
