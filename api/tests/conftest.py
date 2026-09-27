@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
-from app.config import AppConfig, Sources, Storage
+# app.main при импорте создаёт app (load_config из ENV) — VLLM_URL обязателен.
+os.environ.setdefault("VLLM_URL", "http://127.0.0.1:8000")
+
+from app.config import AppConfig, Sources, Storage  # noqa: E402
 from app.main import create_app
 from app.storage.db import init_db
 

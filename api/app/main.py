@@ -12,9 +12,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 import httpx
 from fastapi import FastAPI
@@ -218,12 +220,28 @@ def _prime_psutil(sys_c: SystemCollector) -> None:
         log.warning("psutil warmup failed: %s", e)
 
 
+class _JsonFormatter(logging.Formatter):
+    """Одна JSON-строка на запись: {ts, level, logger, msg} (F5.5)."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        msg = record.getMessage().replace("\n", " ")
+        return json.dumps(
+            {
+                "ts": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+                "level": record.levelname,
+                "logger": record.name,
+                "msg": msg,
+            },
+            ensure_ascii=False,
+        )
+
+
 def _setup_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        stream=None,  # stdout по умолчанию
-    )
+    handler = logging.StreamHandler()
+    handler.setFormatter(_JsonFormatter())
+    root = logging.getLogger()
+    root.handlers = [handler]
+    root.setLevel(logging.INFO)
 
 
 _setup_logging()

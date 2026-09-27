@@ -1,20 +1,17 @@
-"""Загрузка и валидация конфигурации (YAML, ТЗ §3.3).
+"""Загрузка и валидация конфигурации (F5.4: только ENV, без YAML).
 
-Путь к файлу: переменная окружения ``METRICS_CONFIG``, по умолчанию
-``metrics.config.yaml`` в текущем каталоге.
+Все параметры задаются переменными окружения (ТЗ §3.3). Обязательна
+только ``VLLM_URL``; остальные имеют дефолты, см. :func:`load_config`.
 """
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
+
 from typing import Literal
 
-import yaml
 from pydantic import BaseModel, Field, field_validator
-
-ENV_CONFIG = "METRICS_CONFIG"
-DEFAULT_CONFIG_PATH = "metrics.config.yaml"
 
 
 class VllmSource(BaseModel):
@@ -64,7 +61,7 @@ class Retention(BaseModel):
 
 
 class Storage(BaseModel):
-    sqlite_path: str = "./data/metrics.db"
+    sqlite_path: str = "/data/metrics.db"
     retention: Retention = Retention()
 
 
@@ -114,19 +111,130 @@ class AppConfig(BaseModel):
         return "sqlite:///" + str(Path(self.storage.sqlite_path).resolve())
 
 
-def load_config(path: str | None = None) -> AppConfig:
-    """Читает YAML и валидирует в :class:`AppConfig`.
+def _env(name: str, default: str = "") -> str:
+    return os.environ.get(name, default).strip()
 
-    Если файл не найден — используется конфигурация по умолчанию
-    (и предупреждение в stdout не требуется: это dev-режим).
+
+def _env_float(name: str, default: float) -> float:
+    raw = _env(name)
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        raise ValueError(f"{name}: ожидается число, получено {raw!r}") from None
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = _env(name)
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        raise ValueError(f"{name}: ожидается целое, получено {raw!r}") from None
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = _env(name).lower()
+    if not raw:
+        return default
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    raise ValueError(f"{name}: ожидается true/false, получено {raw!r}")
+
+
+def _env_gpu_visible() -> list[int] | Literal["all"]:
+    """GPU_VISIBLE: ``all`` (дефолт) или список индексов, например ``0,1``."""
+    raw = _env("GPU_VISIBLE", "all").lower()
+    if raw == "all":
+        return "all"
+    try:
+        indices = [int(x) for x in raw.split(",") if x.strip()]
+    except ValueError:
+        raise ValueError(
+            f"GPU_VISIBLE: ожидается 'all' или список индексов (0,1), получено {raw!r}"
+        ) from None
+    return indices
+
+
+def _env_telegram_webhook() -> str | None:
+    """TELEGRAM_WEBHOOK из env; если пуст — docker secret /run/secrets/telegram_webhook."""
+    raw = _env("TELEGRAM_WEBHOOK")
+    if raw:
+        return raw
+    secret = Path("/run/secrets/telegram_webhook")
+    if secret.is_file():
+        return secret.read_text(encoding="utf-8").strip() or None
+    return None
+
+
+def load_config() -> AppConfig:
+    """Собирает :class:`AppConfig` из переменных окружения.
+
+    Обязательна только ``VLLM_URL``; остальные параметры берут дефолты.
     """
-    if path is None:
-        path = os.environ.get(ENV_CONFIG, DEFAULT_CONFIG_PATH)
-    p = Path(path)
-    if not p.is_file():
-        return AppConfig()
-    with open(p, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
-    if not isinstance(data, dict):
-        raise ValueError(f"Конфиг {p}: ожидается mapping верхнего уровня")
-    return AppConfig.model_validate(data)
+    vllm_url = _env("VLLM_URL")
+    if not vllm_url:
+        raise RuntimeError(
+            "VLLM_URL не задана: укажите адрес vLLM-сервера, "
+            "например VLLM_URL=http://vllm:8000"
+        )
+    daily_days = _env("RETENTION_DAILY_DAYS")
+
+    return AppConfig(
+        sources=Sources(
+            vllm=VllmSource(
+                url=vllm_url,
+                metrics_path=_env("VLLM_METRICS_PATH", "/metrics"),
+                poll_seconds=_env_float("VLLM_POLL_S", 5),
+                model_name=_env("VLLM_MODEL_NAME") or None,
+                request_timeout=_env_float("VLLM_TIMEOUT_S", 5),
+            ),
+            gpus=GpuSource(
+                poll_seconds=_env_float("GPU_POLL_S", 10),
+                visible=_env_gpu_visible(),
+            ),
+            system=SystemSource(poll_seconds=_env_float("SYS_POLL_S", 10)),
+            logs=LogSources(
+                sources=[
+                    LogSource(
+                        name=_env("LOG_SOURCE_NAME", "vllm"),
+                        type=_env("LOG_SOURCE_TYPE", "file"),
+                        path=_env("LOG_SOURCE_PATH", "/var/log/vllm/vllm.log") or None,
+                        container=_env("LOG_SOURCE_CONTAINER", "vllm") or None,
+                    )
+                ],
+                poll_seconds=_env_float("LOG_POLL_S", 1),
+                retention_days=_env_int("LOG_RETENTION_DAYS", 14),
+            ),
+        ),
+        storage=Storage(
+            sqlite_path=_env("SQLITE_PATH", "/data/metrics.db"),
+            retention=Retention(
+                raw_hours=_env_int("RETENTION_RAW_HOURS", 168),
+                hourly_days=_env_int("RETENTION_HOURLY_DAYS", 180),
+                daily_days=int(daily_days) if daily_days else None,
+            ),
+        ),
+        cost=Cost(
+            currency=_env("CURRENCY", "USD"),
+            electricity=Electricity(
+                rate_per_kwh_usd=_env_float("RATE_PER_KWH_USD", 0.10),
+                system_baseline_watts=_env_float("BASELINE_WATTS", 200),
+            ),
+            tokens=TokenRates(
+                per_million_usd={
+                    "prompt": _env_float("PROMPT_PRICE_PER_M", 0.5),
+                    "completion": _env_float("COMPLETION_PRICE_PER_M", 1.5),
+                }
+            ),
+        ),
+        alerts=Alerts(
+            enabled=_env_bool("ALERTS_ENABLED", True),
+            telegram_webhook=_env_telegram_webhook(),
+            check_interval_s=_env_int("ALERTS_INTERVAL_S", 30),
+        ),
+    )
