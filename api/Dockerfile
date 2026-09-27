@@ -17,6 +17,7 @@ WORKDIR /srv
 COPY --from=deps /install /usr/local
 
 COPY app ./app
+COPY mock ./mock
 COPY migrations ./migrations
 COPY alembic.ini .
 
