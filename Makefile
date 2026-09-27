@@ -6,7 +6,7 @@ COMPOSE  ?= $(shell docker compose version >/dev/null 2>&1 && echo "docker compo
 MOCK_F   := -f docker-compose.yml -f docker-compose.mock.yml
 
 .PHONY: setup dev-api dev-web mock-vllm test-api alembic
-.PHONY: start down rebuild logs ps mock-start mock-down stage-vllm build install-toolkit gpu-check all
+.PHONY: start down rebuild logs ps mock-start mock-down build install-toolkit gpu-check all
 
 # venv + зависимости API
 setup:
@@ -56,26 +56,13 @@ install-toolkit:
 gpu-check:
 	docker run --rm --gpus all ubuntu:24.04 nvidia-smi
 
-# Полный деплой с нуля: toolkit + staging + образы + запуск.
-# Идемпотентно (повторный запуск безопасен), но `build` при каждом прогоне
-# передаёт ~15 ГБ контекста в docker-демон (несколько минут).
+# Полный деплой с нуля: toolkit + образы + запуск.
+# Идемпотентно (повторный запуск безопасен).
 # Для повседневного старта достаточно: make start
-all: install-toolkit stage-vllm up
+all: install-toolkit up
 
-# Впечь conda-env 1Cat-vLLM + исходники в контекст сборки (hard-links, ноль
-# доп. дисков; нужен .env с VLLM_ENV_DIR/VLLM_SRC_DIR; после обновления env
-# повторить). Запускать до первого `make build`/`make start`.
-stage-vllm:
-	@set -e; \
-	ENV=$$(grep '^VLLM_ENV_DIR=' .env | cut -d= -f2); \
-	SRC=$$(grep '^VLLM_SRC_DIR=' .env | cut -d= -f2); \
-	echo "stage-vllm: $${ENV} → docker/vllm/.build-env"; \
-	rm -rf docker/vllm/.build-env docker/vllm/.build-src; \
-	cp -al "$${ENV}" docker/vllm/.build-env; \
-	cp -al "$${SRC}" docker/vllm/.build-src; \
-	echo "stage-vllm: ok (если cp -al упал: разные ФС — замени на cp -a)"
-
-# Пересобрать все образы (vllm тяжёлый: ~15 ГБ контекста)
+# Пересобрать все образы (контексты сборки маленькие — сборка быстрая).
+# Пин версии vLLM: docker compose build --build-arg VLLM_REF=<git sha> vllm
 build:
 	$(COMPOSE) build
 

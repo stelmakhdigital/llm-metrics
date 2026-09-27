@@ -6,9 +6,9 @@
 # * Мок (api/mock/vllm_mock.py) слушает :8000 ТОЛЬКО в compose-сети
 #   (хост-порты не публикует) — реальный vLLM на хосте может работать
 #   дальше без конфликтов.
-# * Конфиг metrics.config.yaml на время мок-теста:
-#     sources.vllm.url: http://vllm-mock:8000
-#     sources.logs[].container: vllm-mock
+# * Конфиг api на время мок-теста (env, пример: .env.example):
+#     VLLM_URL=http://vllm-mock:8000
+#     LOG_SOURCE_CONTAINER=vllm-mock (если читать логи)
 # * В main compose сервис vllm при этом НЕ поднимается (указан список
 #   сервисов в up).
 

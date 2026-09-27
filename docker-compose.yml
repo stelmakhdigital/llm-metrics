@@ -1,26 +1,38 @@
 # llm-metrics — прод-деплой: vLLM (1Cat-vLLM, 4xV100) + api + web (ТЗ §8)
 #
-#   make start   (или: docker compose up -d --build)
-# `version:` обязателен — на сервере docker-compose v1.29.2 без него файл
-# отвергает ("Compose specification is not supported").
-version: "3.8"
+#   make start   (или: docker compose up -d)
+# Роли: vllm — только inference; api — агрегация метрик, бизнес-правила,
+# БД, NVML (все GPU хоста); web — только UI.
+#
+# vLLM наружу НЕ публикуется (нет порта 8000): api ходит в vLLM по имени
+# vllm в compose-сети. Наружу — только web :3000.
 #
 # Требования на хосте:
 #   * NVIDIA-драйвер + nvidia-container-toolkit (GPU инжектятся в контейнеры
 #     автоматически; установка: 4 команды в README «Портативный деплой»)
-#   * conda-env 1Cat-vLLM (собранный vllm + torch cu128) + исходники
-#     editable-установки — пути из .env (VLLM_ENV_DIR, VLLM_SRC_DIR)
 #   * модели — каталог из .env (MODELS_DIR)
-#   * ./metrics.config.yaml — скопировать из metrics.config.example.yaml
+#   * .env — cp .env.example .env (весь конфиг api — через env)
+#   * secrets/telegram_webhook.txt — файл с URL Telegram-webhook (опционально;
+#     не нужен — закомментируйте секцию secrets в этом файле)
 #
 # Портируемый деплой: cp .env.example .env и заполнить пути своего хоста; в
 # самом репо жёстко закодированных путей нет.
 #
 # Перед первым запуском остановить bare-vLLM (~/bin/work-fp8.sh) —
-# он занимает GPU 0-3 и порт 8000.
+# он занимает GPU 0-3.
 #
-# Порты: наружу web:3000 и vllm:8000 (как при bare-запуске);
-# API (8100) только в compose-сети, /api/* — через Next.js-rewrite.
+# Пересборка vLLM-образа: docker compose build vllm (контекст сборки
+# маленький — сборка быстрая). Пин версии vLLM — ARG VLLM_REF:
+#   docker compose build --build-arg VLLM_REF=<git sha> vllm
+volumes:
+  # Общий том логов vLLM: vLLM пишет в /var/log/vllm, api читает (ro)
+  vllm-logs:
+
+secrets:
+  # URL Telegram-webhook для алертов (или — TELEGRAM_WEBHOOK в .env / UI)
+  telegram_webhook:
+    file: ./secrets/telegram_webhook.txt
+
 services:
   # ------------------------------------------------------------- vLLM (TP=4)
   vllm:
@@ -40,8 +52,9 @@ services:
     volumes:
       # Пути хоста — из .env (пример: .env.example):
       # модели (ro); MODEL в .env выбирает, какую грузить
-      # (conda-env и исходники vLLM впечены в образ — make stage-vllm)
       - ${MODELS_DIR}:/mnt/storage/models:ro
+      # логи vLLM — в общий том (api читает их оттуда, лог-источник api)
+      - vllm-logs:/var/log/vllm
     # GPU через nvidia-container-toolkit (библиотеки и устройства инжектятся
     # автоматически; CUDA_VISIBLE_DEVICES=0-3 выставляет вхендр fp8.sh)
     deploy:
@@ -53,8 +66,13 @@ services:
               capabilities: [gpu]
     # NCCL/TP=4 и --mm-processor-cache-type shm требуют большого /dev/shm
     shm_size: "32g"
-    ports:
-      - "8000:8000"
+    # намеренно без ports: наружу vLLM не публикуется — api ходит в него
+    # по имени vllm в compose-сети
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     restart: unless-stopped
 
   # ------------------------------------------------------------------ api
@@ -62,19 +80,20 @@ services:
     build: ./api
     image: llm-metrics-api:latest
     container_name: llm-metrics-api
-    environment:
-      METRICS_CONFIG: /data/metrics.config.yaml
-    # vLLM в соседнем контейнере: vllm.url = http://vllm:8000
-    # (vllm на хосте вне compose: http://host.docker.internal:8000)
+    # весь конфиг api — через env из .env (пример: .env.example):
+    # VLLM_URL, опрос/ретенция, лог-источник, тарифы, алерты
+    env_file: .env
+    secrets:
+      - telegram_webhook
+    # vLLM в соседнем контейнере: VLLM_URL=http://vllm:8000 (дефолт .env);
+    # vLLM на хосте вне compose: http://host.docker.internal:8000
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/data
-      - ./metrics.config.yaml:/data/metrics.config.yaml:ro
-      # docker-сокет: лог-индексатор читает `docker logs vllm`
-      - /var/run/docker.sock:/var/run/docker.sock
-      # (альтернатива: file-источник логов — смонтировать каталог с nohup.log)
-      # - /mnt/storage/vllm:/mnt/storage/vllm:ro
+      # логи vLLM — общий том (vLLM пишет, api читает ro;
+      # лог-источник: LOG_SOURCE_PATH=/var/log/vllm/vllm.log)
+      - vllm-logs:/var/log/vllm:ro
     # NVML-коллектор видит все GPU хоста (libnvidia-ml инжектится toolkit'ом)
     deploy:
       resources:
@@ -83,6 +102,13 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    # защита от утечки памяти: потолок ниже, чем у vLLM (GPU)
+    mem_limit: "2g"
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
     restart: unless-stopped
     # намеренно без ports: — доступ только из compose-сети
 
@@ -99,4 +125,10 @@ services:
       - api
     ports:
       - "3000:3000"
+    mem_limit: "2g"
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
     restart: unless-stopped

@@ -21,10 +21,9 @@ node_modules/
 # Логи
 *.log
 
+# секреты (secrets в docker-compose.yml)
+secrets/
+
 # инструментальные артефакты
 .memory/
 graft/
-
-# staging conda-env для сборки vLLM-образа (make stage-vllm; hard-links)
-docker/vllm/.build-env/
-docker/vllm/.build-src/
