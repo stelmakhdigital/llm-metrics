@@ -14,8 +14,10 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends bash ca-certificates \
+    && apt-get install -y --no-install-recommends bash ca-certificates gcc libc6-dev \
     && rm -rf /var/lib/apt/lists/*
+# gcc/libc6-dev — triton JIT-компилирует C-модуль драйвер-интерфейса при
+# первом запуске (compile_module_from_src); без cc старт падает
 
 # Автономность: vLLM-окружение хоста впечено в образ (make stage-vllm)
 COPY .build-env/ /opt/vllm-env/
