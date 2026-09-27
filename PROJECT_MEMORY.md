@@ -49,3 +49,17 @@
 - Минимальный diff; разбор без правок; коммиты — только по явной команде, конвенциональные, привязка к roadmap
 - Todos каждого шага на русском; пункты «компиляция и тестирование» и «разрешение на коммит» всегда в todos
 - Задачи и прогресс — `roadmap.md`; правила для агентов — `AGENTS.md`
+
+## Сессия 2026-09-27 — F5: автономный vLLM, env-конфиг, docker-гигиена
+Решения (согласовано с пользователем):
+- vLLM: multi-stage Dockerfile на nvidia/cuda:12.8.0; 1CatAI/1Cat-vLLM head main (пин-коммит 14abfc27ee4e13cd2a9d1a8a882f36a629e5889a, ARG VLLM_REF) собирается в образе; stage-vllm/conda-env УБРАНЫ.
+- vLLM слушает 127.0.0.1:8000 внутри контейнера, наружу не публикуется (только compose-сеть; api ходит по имени vllm).
+- Логи vLLM: stdout → /var/log/vllm/vllm.log (общий volume vllm-logs, монтируется и в api) + ротация 50MB×4 в entrypoint. Docker-сокет и docker CLI из api УБРАНЫ (лог-источник — file).
+- api: полный перевод конфига на ENV (yaml metrics.config.yaml убран). Список имён — .env.example / compose. VLLM_URL обязателен.
+- api: JSON-логи (stdlib formatter), multi-stage Dockerfile, Telegram-webhook — docker secret /run/secrets/telegram_webhook с fallback env TELEGRAM_WEBHOOK.
+- NVML остаётся в api (решение: один тонкий defensiv'ный коллектор, вынос в сервис не оправдан).
+- Roles: vllm — только inference; api — агрегация метрик, БД, бизнес-правила; web — только UI.
+- mem_limit api/web 2g, healthcheck'и, лог-ротация compose, no-new-privileges — уже были, сохраняем.
+- Итог F5 (2026-09-27, до коммита): api — env-конфиг (config.py, VLLM_URL обязателен, дефолт VLLM_TIMEOUT_S=5), JSON-логи, multi-stage Dockerfile без docker CLI; pytest 102 passed. docker/vllm — multi-stage nvidia/cuda:12.8.0 (build=devel: clone 1CatAI/1Cat-vLLM $VLLM_REF + torch 2.10.0+cu128, TORCH_CUDA_ARCH_LIST=7.0; runtime=cudnn9-runtime + venv + gcc для triton JIT), 127.0.0.1:8000, логи→vllm-logs volume (/var/log/vllm/vllm.log) + ротация 50MB×4, UBU_MIRROR. compose: ports vllm убран, volume vllm-logs, secrets telegram_webhook (file ./secrets/telegram_webhook.txt — создать или закомментировать секцию), no-new-privileges убран. Makefile: −stage-vllm, all=install-toolkit up. metrics.config.example.yaml удалён.
+- Фикс: web/src/app/health/ (stub healthcheck, ломал build: конфликт с (tabs)/health) → переименован в /healthz, web/Dockerfile HEALTHCHECK → /healthz. next build ✓.
+- Осталось: build vLLM-образа на GPU-сервере (часы), docker compose config/прогон, коммит.

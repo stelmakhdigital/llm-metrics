@@ -2,7 +2,7 @@
 
 ## Контекст
 - Проект: веб-мониторинг vLLM-сервера. ТЗ: `TZ-vllm-metrics-app.md` (источник правды), контекст сессии: `PROJECT_MEMORY.md`, план/прогресс: `roadmap.md`.
-- Stack: FastAPI (Python 3.11+, `api/`), Next.js + TS + Tailwind + shadcn/ui + uPlot (`web/`), SQLite WAL + Alembic, docker compose для прод-деплоя.
+- Stack: FastAPI (Python 3.11+, `api/`), Next.js + TS + Tailwind + shadcn/ui + uPlot (`web/`), SQLite WAL + Alembic, docker compose для прод-деплоя (наружу только web :3000; vLLM не публикуется — api ходит в него по имени в compose-сети; конфиг api — env из `.env`).
 - UI — русский. Времена в БД — epoch/UTC, отображение — локальное время сервера.
 
 ## Структура
@@ -11,7 +11,7 @@ api/          # FastAPI: app, collectors/, storage, cost, logs, sse
   migrations/ # alembic
 web/          # Next.js App Router; app/(tabs)/model|gpu|system|cost|logs|settings
 docs/         # выборка метрик vLLM, инструкции
-metrics.config.example.yaml
+.env.example  # весь конфиг api (env); secrets/ — Telegram-webhook (в git не попадает)
 docker-compose.yml, Dockerfile.*
 ```
 

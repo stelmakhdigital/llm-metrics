@@ -1,7 +1,8 @@
 # Деплой llm-metrics (docker compose)
 
 Прод-деплой: **vLLM (1Cat-vLLM, 4xV100 TP=4) + api + web** одним
-`docker compose up -d --build`. Наружу: `web :3000` и `vllm :8000`;
+`docker compose up -d --build`. Наружу только `web :3000` (vLLM наружу
+НЕ публикуется — api ходит в него по имени в compose-сети);
 API (8100) — только в compose-сети (`/api/*` через Next.js-rewrite).
 
 ## 1. Требования на сервере
@@ -11,12 +12,12 @@ API (8100) — только в compose-сети (`/api/*` через Next.js-rew
   установка — раздел 2, ~2 мин);
 * NVIDIA-драйвер (проверить: `ls /usr/lib/x86_64-linux-gnu/libcuda.so.1`);
 * каталог моделей + сама модель (~29 ГБ) — `MODELS_DIR` / `MODEL` в `.env`;
-* образ `llm-metrics-vllm:latest` — **автономный**: conda-env 1Cat-vLLM и
-  исходники впечены в image (`make stage-vllm` + сборка на сервере, где env
-  собран; пути `VLLM_ENV_DIR`/`VLLM_SRC_DIR` в `.env` нужны только там).
+* образ `llm-metrics-vllm:latest` — собирается из исходников (контекст сборки
+  маленький, сборка быстрая); пин версии vLLM:
+  `docker compose build --build-arg VLLM_REF=<git sha> vllm`.
 
 > vLLM-контейнер полностью самодостаточен: из хоста нужны только модель
-> (mount), GPU (toolkit) и docker-сокет (логи).
+> (mount), GPU (toolkit) и общий лог-том `vllm-logs` (логи → api).
 
 ## 2. Установка
 
@@ -34,26 +35,25 @@ sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart doc
 # 2) остановить bare-vLLM (занимает GPU 0-3 и :8000)
 #    (процесс от ~/bin/work-fp8.sh; Ctrl-C в терминале или kill <pid>)
 
-# 3) репозиторий + конфиг + окружение
+# 3) репозиторий + окружение
 git clone <repo-url> llm-metrics && cd llm-metrics
-cp metrics.config.example.yaml metrics.config.yaml
-cp .env.example .env && $EDITOR .env     # MODELS_DIR / MODEL (+VLLM_* для stage)
+cp .env.example .env && $EDITOR .env     # MODELS_DIR / MODEL
 mkdir -p data
+# опционально: secrets/telegram_webhook.txt с URL Telegram-webhook
+# (не нужен — закомментировать секцию secrets в docker-compose.yml)
 
-# 4) образы: vLLM-образ автономный (env впевает make stage-vllm)
-#    — только на сервере, где собран conda-env 1Cat-vLLM;
-#    на другом сервере образ переносится: docker save/load (раздел 4.1)
-make stage-vllm && make build
+# 4) образы (контексты сборки маленькие; vLLM — из исходников)
+make build
 ```
 
-`metrics.config.yaml` (по умолчанию в примере всё уже под compose):
+`.env` (в примере всё уже под compose по умолчанию):
 
-| Ключ | Значение |
+| Переменная | Значение |
 |---|---|
-| `sources.vllm.url` | `http://vllm:8000` (vllm в этом же compose) |
-| `sources.logs` | `type: docker, container: vllm` |
-| `cost.*` | реальные тарифы |
-| `alerts.telegram_webhook` | URL (раздел 6) или `null` |
+| `VLLM_URL` | `http://vllm:8000` (vllm в этом же compose) |
+| `LOG_SOURCE_*` | `file`, `/var/log/vllm/vllm.log` (общий том `vllm-logs`) |
+| `*PRICE_PER_M`, `RATE_PER_KWH_USD` | реальные тарифы |
+| `TELEGRAM_WEBHOOK` (или secrets-файл) | URL (раздел 6) или пусто |
 
 ## 3. Запуск
 
@@ -70,13 +70,13 @@ make ps                  # vllm: healthy (старт ~10-20 мин: 29 ГБ мо
 
 ```bash
 curl -s http://127.0.0.1:3000/api/health      # все источники online
-curl -s http://127.0.0.1:8000/v1/models        # vLLM отвечает (как при bare)
 ```
 
 В браузере `http://<IP>:3000`:
 
 * 8 вкладок: Модель, GPU (5 GPU: 4xV100 под vLLM + RTX 2060), Система,
-  Стоимость, Логи (идут строки vLLM через docker logs), Алерты, Health, Настройки;
+  Стоимость, Логи (идут строки vLLM из общего тома `vllm-logs`), Алерты,
+  Health, Настройки;
 * бейджи vLLM/GPU/SYS — зелёные.
 
 ## 4.1 Перенос на другой сервер (портативный деплой)
@@ -87,14 +87,12 @@ curl -s http://127.0.0.1:8000/v1/models        # vLLM отвечает (как �
    под `--tensor-parallel-size 4`), диск под модель и `./data`.
 2. **Софт:** Docker + NVIDIA-драйвер + nvidia-container-toolkit
    (раздел 2, шаг 1) — 5 команд, разово.
-3. **vLLM-образ:** автономный (env внутри) — перенести:
-   `docker save llm-metrics-vllm:latest | gzip > vllm-image.tar.gz` на старом
-   сервере (~5–7 ГБ), скопировать, `docker load < vllm-image.tar.gz` на новом.
-   Конвей 1Cat-vLLM на новом сервере НЕ нужен.
+3. **vLLM-образ:** собрать на новом: `docker compose build vllm`
+   (контекст маленький, исходники из git), либо перенести docker save/load.
 4. **Модель:** ~29 ГБ — `rsync -av --partial` с текущего сервера
    (или скачать заново); путь — `MODELS_DIR` + `MODEL` в `.env`.
-5. **Код:** `git clone`, `cp metrics.config.example.yaml metrics.config.yaml`,
-   `cp .env.example .env` + заполнить, `make start` (образ vllm уже загружен).
+5. **Код:** `git clone`, `cp .env.example .env` + заполнить, `make start`
+   (образ vllm уже собран).
 6. **Проверка:** раздел 4.
 
 Что остаётся специфичным для «этого» сервера и переносится в `.env`:
@@ -102,12 +100,11 @@ curl -s http://127.0.0.1:8000/v1/models        # vLLM отвечает (как �
 Остальное (API, web, БД, конфиг) переносится как есть; `./data` —
 скопировать, если хочется сохранить историю.
 
-## 5. Обновление окружения vLLM
+## 5. Обновление vLLM
 
-Если обновляете 1Cat-vLLM/torch в conda-env на хосте — повторить
-`make stage-vllm && make build` (env впевается в образ, ~время сборки;
-`docker/vllm/.build-*` — hard-links, доп. диска не занимают).
-Аргументы сервера — в `docker/vllm/scripts/fp8.sh` (копия `~/bin/work-fp8.sh`).
+Обновить или зафиксировать версию: `docker compose build --build-arg VLLM_REF=<git sha> vllm`
+(без аргумента — дефолтная ветка/реф). Затем `make start` (или `docker compose up -d`).
+Аргументы сервера — в `docker/vllm/scripts/fp8.sh`.
 
 ## 6. Telegram-алерты (разовая настройка)
 
@@ -116,8 +113,9 @@ curl -s http://127.0.0.1:8000/v1/models        # vLLM отвечает (как �
    `curl https://api.telegram.org/bot<TOKEN>/getUpdates` → взять `chat.id`.
 3. Webhook: `https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<CHAT>`.
 4. Указать в UI (вкладка «Алерты» → поле webhook → кнопка **Тест**) **или**
-   в `alerts.telegram_webhook` конфига + `docker compose restart api`.
-   UI-значения имеют приоритет над конфигом (хранятся в БД).
+   в `TELEGRAM_WEBHOOK` в `.env` / файле `secrets/telegram_webhook.txt` +
+   `docker compose restart api`.
+   UI-значения имеют приоритет (хранятся в БД).
 
 Дальше правила/пороги/уровни редактируются в той же вкладке;
 «Сбросить правила» — значения по умолчанию.
@@ -129,7 +127,7 @@ curl -s http://127.0.0.1:8000/v1/models        # vLLM отвечает (как �
 git pull && make rebuild
 
 # смена конфига (URL vLLM, источники логов, интервалы, ретенция)
-nano metrics.config.yaml
+nano .env
 docker compose restart api
 
 # логи процесса
@@ -146,6 +144,23 @@ docker compose exec api python -m alembic upgrade head
 
 * `./data/metrics.db` (+ WAL-файлы) — все данные (метрики, токены, логи,
   настройки, алерты). Бэкап = копия файла (желательно при остановленном api).
-* `./metrics.config.yaml` — конфиг (URL, интервалы, ретенция, дефолт тарифов/алертов).
+* `.env` — конфиг (URL, интервалы, ретенция, дефолт тарифов/алертов);
+  `secrets/` — Telegram-webhook (не в git).
 * Ретенция: raw 168 ч, hourly 180 дн, daily безлимит, логи 14 дн
-  (настраивается в конфиге/`storage.retention`).
+  (настраивается в `.env`).
+
+## 9. Архитектура и изоляция
+
+* **vllm** — только инференс, не знает про мониторинг. Наружу НЕ публикуется:
+  api ходит в него по имени vllm в compose-сети.
+* **api** — весь мониторинг: метрики vLLM (`/metrics`), NVML (все 5 GPU,
+  включая RTX 2060 вне vLLM), лог-индексатор vLLM, БД, алерты. 8100 наружу
+  не публикуется.
+* **web** — только UI, `/api/*` rewrite на api, напрямую к vLLM не ходит.
+
+NVML читаем в api (а не в vLLM): один процесс видит все GPU хоста, включая
+RTX 2060, которой в vLLM (TP=4, GPU 0-3) нет; toolkit инжектит libnvidia-ml.
+
+Логи vLLM собираются через общий том `vllm-logs` (vLLM пишет
+`/var/log/vllm/vllm.log`, api читает ro, лог-источник `file`) — docker-сокет
+не нужен.

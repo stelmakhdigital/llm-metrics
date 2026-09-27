@@ -5,9 +5,10 @@
 
 ## Запуск
 
-Prod (сервер с vLLM): `docker compose up -d --build` (web :3000, API без
-публичного порта — `/api/*` проксирует Next.js). Конфиг: скопировать
-`metrics.config.example.yaml` → `./metrics.config.yaml` и отредактировать.
+Prod (сервер с vLLM): `docker compose up -d --build` (наружу только web :3000;
+API и vLLM без публичных портов — `/api/*` проксирует Next.js, api ходит
+в vLLM по имени в compose-сети). Конфиг — `.env`: `cp .env.example .env`
+и отредактировать (URL vLLM, опрос/ретенция, тарифы, алерты).
 Подробная инструкция (установка, Telegram-алерты, эксплуатация) —
 [`docs/DEPLOY.md`](docs/DEPLOY.md).
 При обновлении схемы БД: `cd api && alembic upgrade head` (миграции в
@@ -26,7 +27,8 @@ Dev (без docker): `make dev-api` (uvicorn :8100) + `make dev-web` (:3000);
 * Движок (`api/app/alerts`) раз в `alerts.check_interval_s` (default 30 с)
   проверяет правила по метрикам и статусам источников; журнал — таблица
   `alerts` (активные восстанавливаются после рестарта).
-* Telegram: укажите в UI (или в конфиге `alerts.telegram_webhook`)
+* Telegram: укажите в UI (или в `TELEGRAM_WEBHOOK` в `.env` / файле
+  `secrets/telegram_webhook.txt`)
   полный URL `https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<CHAT>`;
   кнопка «Тест» проверяет доставку. UI-настройки имеют приоритет над конфигом.
 * Правила (порог, оператор, «длится N с», пауза после восстановления, уровень
@@ -54,23 +56,20 @@ KPI и графики вкладки «Модель» (сырые данные, 
 
 ## Логи vLLM (вкладка «Логи»)
 
-Лог-индексатор (`api/app/logs`) опрашивает источники из секции `logs`
-конфига раз в `poll_seconds` (default 1 с) и пишет их в `log_entries`
-(ретенция — `logs.retention_days`, default **14 дней**, ежечасная чистка).
+Лог-индексатор (`api/app/logs`) опрашивает источник из `.env`
+(`LOG_SOURCE_*`) раз в `LOG_POLL_S` (default 1 с) и пишет его в `log_entries`
+(ретенция — `LOG_RETENTION_DAYS`, default **14 дней**, ежечасная чистка).
+Тип источника — `file` (файл, default) или `docker` (`docker logs <container>`).
 
 ### Файл логов (тип `file`, по умолчанию)
 
-Укажите путь к файлу, который пишет vLLM (например, `nohup.out`):
+В compose логи vLLM лежат в общем томе `vllm-logs`: vLLM пишет
+`/var/log/vllm/vllm.log`, api монтирует тот же том (ro):
 
-```yaml
-sources:
-  logs:
-    sources:
-      - name: vllm            # имя источника (видно в UI и в /api/health)
-        type: file
-        path: /mnt/storage/vllm/nohup.log
-    poll_seconds: 1
-    retention_days: 14
+```
+LOG_SOURCE_NAME=vllm            # имя источника (видно в UI и в /api/health)
+LOG_SOURCE_TYPE=file
+LOG_SOURCE_PATH=/var/log/vllm/vllm.log
 ```
 
 * Tail идёт по offset+inode: ротация/пересоздание файла обрабатывается,
@@ -78,38 +77,6 @@ sources:
   остальные источники не страдают).
 * Первая встреча файла — старт **с конца** (история до запуска индексатора
   не подтягивается).
-* Для compose смонтируйте файл в контейнер api (в `docker-compose.yml`):
-
-```yaml
-    volumes:
-      - /mnt/storage/vllm:/mnt/storage/vllm:ro
-```
-
-### Docker logs (тип `docker`)
-
-Если vLLM запущен как контейнер — можно читать `docker logs` напрямую:
-
-```yaml
-sources:
-  logs:
-    sources:
-      - name: vllm
-        type: docker
-        container: vllm      # имя/ID контейнера
-```
-
-Бэк поднимает `docker logs -t -f --tail=0 <container>` (subprocess, pipe;
-`--tail=0` — только новые строки). Требования:
-
-1. **docker CLI** должен быть доступен в контейнере api — в
-   `docker-compose.yml` уже смонтирован сокет:
-   `- /var/run/docker.sock:/var/run/docker.sock` (для docker-источников логов);
-2. контейнер vLLM и контейнер api должны видеть один и тот же docker-демон
-   (в типичном деплое они на одном хосте — ок).
-
-При отсутствии/недоступности docker CLI источник переходит в `offline`
-со статусом `last_error = "docker CLI не найден …"` (показывается в UI,
-вкладка «Логи»); повторные попытки — раз в 60 с.
 
 ### Что попадает в UI
 
