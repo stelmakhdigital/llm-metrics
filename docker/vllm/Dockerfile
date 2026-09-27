@@ -47,9 +47,12 @@ RUN pip install --index-url https://download.pytorch.org/whl/cu128 \
 RUN pip install cmake ninja packaging patchelf wheel jinja2 \
       "setuptools>=77.0.3,<81.0.0" setuptools-scm setuptools-rust
 
-# Исходники форка на пин-коммите
-RUN git clone --depth 1 --branch "${VLLM_REF}" \
-      https://github.com/1CatAI/1Cat-vLLM /build/vllm
+# Исходники форка на пин-коммите (fetch по SHA с --depth 1: git clone --branch
+# не принимает SHA, а GitHub отдаёт произвольный SHA по прямой ссылке)
+RUN git init /build/vllm \
+    && git -C /build/vllm remote add origin https://github.com/1CatAI/1Cat-vLLM \
+    && git -C /build/vllm fetch --depth 1 origin "${VLLM_REF}" \
+    && git -C /build/vllm checkout -q FETCH_HEAD
 
 # Сборка: только SM70 (V100), см. README форка «Build From Source».
 # torch уже установлен из cu128-индекса → requirement torch==2.10.0 форка
