@@ -24,3 +24,7 @@ node_modules/
 # инструментальные артефакты
 .memory/
 graft/
+
+# staging conda-env для сборки vLLM-образа (make stage-vllm; hard-links)
+docker/vllm/.build-env/
+docker/vllm/.build-src/

@@ -6,7 +6,7 @@ COMPOSE  ?= $(shell docker compose version >/dev/null 2>&1 && echo "docker compo
 MOCK_F   := -f docker-compose.yml -f docker-compose.mock.yml
 
 .PHONY: setup dev-api dev-web mock-vllm test-api alembic
-.PHONY: start down rebuild logs ps mock-start mock-down
+.PHONY: start down rebuild logs ps mock-start mock-down stage-vllm build
 
 # venv + зависимости API
 setup:
@@ -36,16 +36,36 @@ alembic:
 
 # ---- прод (docker compose; пути хоста и модель — из .env, пример: .env.example) ----
 
-# Поднять стек (build + vllm + api + web)
+# Впечь conda-env 1Cat-vLLM + исходники в контекст сборки (hard-links, ноль
+# доп. дисков; нужен .env с VLLM_ENV_DIR/VLLM_SRC_DIR; после обновления env
+# повторить). Запускать до первого `make build`/`make start`.
+stage-vllm:
+	@set -e; \
+	ENV=$$(grep '^VLLM_ENV_DIR=' .env | cut -d= -f2); \
+	SRC=$$(grep '^VLLM_SRC_DIR=' .env | cut -d= -f2); \
+	echo "stage-vllm: $${ENV} → docker/vllm/.build-env"; \
+	rm -rf docker/vllm/.build-env docker/vllm/.build-src; \
+	cp -al "$${ENV}" docker/vllm/.build-env; \
+	cp -al "$${SRC}" docker/vllm/.build-src; \
+	echo "stage-vllm: ok (если cp -al упал: разные ФС — замени на cp -a)"
+
+# Пересобрать все образы (vllm тяжёлый: ~15 ГБ контекста)
+build:
+	$(COMPOSE) build
+
+# Поднять стек (без пересборки; образы — make build)
 start:
-	$(COMPOSE) up -d --build
+	$(COMPOSE) up -d
+
+# Первый деплой/после смены кода: образы + запуск
+up: build start
 
 # Остановить и удалить контейнеры
 down:
 	$(COMPOSE) down
 
 # Полный рестарт с пересборкой
-rebuild: down start
+rebuild: down up
 
 # Логи (usage: make logs S=api|web|vllm)
 logs:
@@ -57,7 +77,7 @@ ps:
 
 # Стек с мок-вLLM вместо реального (не занимает GPU; usage: make mock-down)
 mock-start:
-	$(COMPOSE) $(MOCK_F) up -d --build
+	$(COMPOSE) $(MOCK_F) up -d --build api web vllm-mock
 
 mock-down:
 	$(COMPOSE) $(MOCK_F) down

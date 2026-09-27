@@ -39,12 +39,8 @@ services:
       PORT: "8000"
     volumes:
       # Пути хоста — из .env (пример: .env.example):
-      # conda-окружение хоста (1Cat-vLLM + torch cu128, read-only)
-      - ${VLLM_ENV_DIR}:/opt/vllm-env:ro
-      # исходники editable-установки: .pth в site-packages указывает на ЭТОТ
-      # путь — mount-ить обязательно по тому же пути
-      - ${VLLM_SRC_DIR}:${VLLM_SRC_DIR}:ro
-      # модели хоста (ro); MODEL в .env выбирает, какую грузить
+      # модели (ro); MODEL в .env выбирает, какую грузить
+      # (conda-env и исходники vLLM впечены в образ — make stage-vllm)
       - ${MODELS_DIR}:/mnt/storage/models:ro
     # GPU через nvidia-container-toolkit (библиотеки и устройства инжектятся
     # автоматически; CUDA_VISIBLE_DEVICES=0-3 выставляет вхендр fp8.sh)

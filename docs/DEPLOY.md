@@ -10,14 +10,13 @@ API (8100) — только в compose-сети (`/api/*` через Next.js-rew
   устройства инжектятся в контейнеры автоматически;
   установка — раздел 2, ~2 мин);
 * NVIDIA-драйвер (проверить: `ls /usr/lib/x86_64-linux-gnu/libcuda.so.1`);
-* conda-окружение 1Cat-vLLM + исходники editable-установки — пути
-  задаются в `.env` (`VLLM_ENV_DIR`, `VLLM_SRC_DIR`);
-* каталог моделей + сама модель (~29 ГБ) — `MODELS_DIR` / `MODEL` в `.env`.
+* каталог моделей + сама модель (~29 ГБ) — `MODELS_DIR` / `MODEL` в `.env`;
+* образ `llm-metrics-vllm:latest` — **автономный**: conda-env 1Cat-vLLM и
+  исходники впечены в image (`make stage-vllm` + сборка на сервере, где env
+  собран; пути `VLLM_ENV_DIR`/`VLLM_SRC_DIR` в `.env` нужны только там).
 
-> vLLM-контейнер НЕ ставит зависимости: монтирует read-only готовый
-> conda-env хоста (тот же, что bare-скрипт `~/bin/work-fp8.sh`).
-> Полностью автономный образ (env «впечён» в image) — следующий шаг,
-> если нужно убрать зависимость от файлов хоста.
+> vLLM-контейнер полностью самодостаточен: из хоста нужны только модель
+> (mount), GPU (toolkit) и docker-сокет (логи).
 
 ## 2. Установка
 
@@ -38,8 +37,13 @@ sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart doc
 # 3) репозиторий + конфиг + окружение
 git clone <repo-url> llm-metrics && cd llm-metrics
 cp metrics.config.example.yaml metrics.config.yaml
-cp .env.example .env && $EDITOR .env     # VLLM_ENV_DIR / VLLM_SRC_DIR / MODELS_DIR / MODEL
+cp .env.example .env && $EDITOR .env     # MODELS_DIR / MODEL (+VLLM_* для stage)
 mkdir -p data
+
+# 4) образы: vLLM-образ автономный (env впевает make stage-vllm)
+#    — только на сервере, где собран conda-env 1Cat-vLLM;
+#    на другом сервере образ переносится: docker save/load (раздел 4.1)
+make stage-vllm && make build
 ```
 
 `metrics.config.yaml` (по умолчанию в примере всё уже под compose):
@@ -54,9 +58,10 @@ mkdir -p data
 ## 3. Запуск
 
 ```bash
-docker compose up -d --build
-docker compose ps    # vllm: healthy (старт ~10-20 мин: 29 ГБ модель + cudagraphs),
-                     # api: healthy, web: running
+make start               # up -d без пересборки (образы уже есть)
+make ps                  # vllm: healthy (старт ~10-20 мин: 29 ГБ модель + cudagraphs),
+                         # api: healthy, web: running
+# пересборка после смены кода: make rebuild (= down + build + up)
 ```
 
 Первая БД создаётся автоматически (авто-bootstrap схемы + alembic head).
@@ -82,26 +87,27 @@ curl -s http://127.0.0.1:8000/v1/models        # vLLM отвечает (как �
    под `--tensor-parallel-size 4`), диск под модель и `./data`.
 2. **Софт:** Docker + NVIDIA-драйвер + nvidia-container-toolkit
    (раздел 2, шаг 1) — 5 команд, разово.
-3. **Конвей vLLM (1Cat-vLLM):** готовый conda-env + исходники
-   (раздел 5 — либо перенос env, либо пересборка; см. примечание в §1).
-   Пути вписать в `VLLM_ENV_DIR` / `VLLM_SRC_DIR`.
+3. **vLLM-образ:** автономный (env внутри) — перенести:
+   `docker save llm-metrics-vllm:latest | gzip > vllm-image.tar.gz` на старом
+   сервере (~5–7 ГБ), скопировать, `docker load < vllm-image.tar.gz` на новом.
+   Конвей 1Cat-vLLM на новом сервере НЕ нужен.
 4. **Модель:** ~29 ГБ — `rsync -av --partial` с текущего сервера
    (или скачать заново); путь — `MODELS_DIR` + `MODEL` в `.env`.
 5. **Код:** `git clone`, `cp metrics.config.example.yaml metrics.config.yaml`,
-   `cp .env.example .env` + заполнить, `make start`.
+   `cp .env.example .env` + заполнить, `make start` (образ vllm уже загружен).
 6. **Проверка:** раздел 4.
 
 Что остаётся специфичным для «этого» сервера и переносится в `.env`:
-пути env/исходников/моделей, имя модели, профиль запуска (`VLLM_SCRIPT`).
+путь каталога моделей, имя модели, профиль запуска (`VLLM_SCRIPT`).
 Остальное (API, web, БД, конфиг) переносится как есть; `./data` —
 скопировать, если хочется сохранить историю.
 
-## 5. Обновление bare-окружения vLLM
+## 5. Обновление окружения vLLM
 
-Если обновляете 1Cat-vLLM/torch в conda-env на хосте — контейнер vllm
-подхватит изменения после `docker compose restart vllm` (env смонтирован
-read-only, пересборка образа не нужна). Аргументы сервера — в
-`docker/vllm/entrypoint.sh` (копия `~/bin/work-fp8.sh`).
+Если обновляете 1Cat-vLLM/torch в conda-env на хосте — повторить
+`make stage-vllm && make build` (env впевается в образ, ~время сборки;
+`docker/vllm/.build-*` — hard-links, доп. диска не занимают).
+Аргументы сервера — в `docker/vllm/scripts/fp8.sh` (копия `~/bin/work-fp8.sh`).
 
 ## 6. Telegram-алерты (разовая настройка)
 
@@ -120,7 +126,7 @@ read-only, пересборка образа не нужна). Аргумент�
 
 ```bash
 # обновление кода
-git pull && docker compose up -d --build
+git pull && make rebuild
 
 # смена конфига (URL vLLM, источники логов, интервалы, ретенция)
 nano metrics.config.yaml
