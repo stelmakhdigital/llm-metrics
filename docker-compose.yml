@@ -6,8 +6,8 @@
 version: "3.8"
 #
 # Требования на хосте:
-#   * NVIDIA-драйвер (устройства + libcuda/libnvidia-ml монтируются ниже;
-#     nvidia-container-toolkit НЕ требуется)
+#   * NVIDIA-драйвер + nvidia-container-toolkit (GPU инжектятся в контейнеры
+#     автоматически; установка: 4 команды в README «Портативный деплой»)
 #   * conda-env 1Cat-vLLM (собранный vllm + torch cu128) + исходники
 #     editable-установки — пути из .env (VLLM_ENV_DIR, VLLM_SRC_DIR)
 #   * модели — каталог из .env (MODELS_DIR)
@@ -46,18 +46,15 @@ services:
       - ${VLLM_SRC_DIR}:${VLLM_SRC_DIR}:ro
       # модели хоста (ro); MODEL в .env выбирает, какую грузить
       - ${MODELS_DIR}:/mnt/storage/models:ro
-      # драйвер-библиотеки хоста (нужны CUDA в контейнере без toolkit)
-      - ${LIBCUDA_LIB}:/usr/lib/x86_64-linux-gnu/libcuda.so.1:ro
-      - ${LIBNVML_LIB}:/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:ro
-    # 4 GPU для TP=4 (устройства драйвера хоста)
-    devices:
-      - /dev/nvidiactl
-      - /dev/nvidia0
-      - /dev/nvidia1
-      - /dev/nvidia2
-      - /dev/nvidia3
-      - /dev/nvidia-uvm
-      - /dev/nvidia-uvm-tools
+    # GPU через nvidia-container-toolkit (библиотеки и устройства инжектятся
+    # автоматически; CUDA_VISIBLE_DEVICES=0-3 выставляет вхендр fp8.sh)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     # NCCL/TP=4 и --mm-processor-cache-type shm требуют большого /dev/shm
     shm_size: "32g"
     ports:
@@ -78,22 +75,18 @@ services:
     volumes:
       - ./data:/data
       - ./metrics.config.yaml:/data/metrics.config.yaml:ro
-      # NVML-библиотека драйвера с хоста (в slim-образе её нет)
-      - ${LIBNVML_LIB}:/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:ro
       # docker-сокет: лог-индексатор читает `docker logs vllm`
       - /var/run/docker.sock:/var/run/docker.sock
       # (альтернатива: file-источник логов — смонтировать каталог с nohup.log)
       # - /mnt/storage/vllm:/mnt/storage/vllm:ro
-    # все 5 GPU хоста: 4xV100 (vllm) + RTX 2060 (llm-metrics)
-    devices:
-      - /dev/nvidiactl
-      - /dev/nvidia0
-      - /dev/nvidia1
-      - /dev/nvidia2
-      - /dev/nvidia3
-      - /dev/nvidia4
-      - /dev/nvidia-uvm
-      - /dev/nvidia-uvm-tools
+    # NVML-коллектор видит все GPU хоста (libnvidia-ml инжектится toolkit'ом)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     restart: unless-stopped
     # намеренно без ports: — доступ только из compose-сети
 

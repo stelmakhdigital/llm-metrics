@@ -6,13 +6,13 @@ API (8100) — только в compose-сети (`/api/*` через Next.js-rew
 
 ## 1. Требования на сервере
 
-* Docker + Compose; **nvidia-container-toolkit НЕ требуется** (GPU
-  прокидывается устройствами + драйвер-библиотеками, см. compose);
+* Docker + Compose + **nvidia-container-toolkit** (GPU-библиотеки и
+  устройства инжектятся в контейнеры автоматически;
+  установка — раздел 2, ~2 мин);
 * NVIDIA-драйвер (проверить: `ls /usr/lib/x86_64-linux-gnu/libcuda.so.1`);
-* conda-окружение 1Cat-vLLM: `/home/arkalaust/miniconda3/envs/1cat-vllm-15`
-  + исходники `/home/arkalaust/1Cat-vLLM` (editable-установка — пути
-  зашиты в .pth, менять нельзя);
-* модель: `/mnt/storage/models/Qwen3.8-27B-FP8` (~29 ГБ).
+* conda-окружение 1Cat-vLLM + исходники editable-установки — пути
+  задаются в `.env` (`VLLM_ENV_DIR`, `VLLM_SRC_DIR`);
+* каталог моделей + сама модель (~29 ГБ) — `MODELS_DIR` / `MODEL` в `.env`.
 
 > vLLM-контейнер НЕ ставит зависимости: монтирует read-only готовый
 > conda-env хоста (тот же, что bare-скрипт `~/bin/work-fp8.sh`).
@@ -22,12 +22,23 @@ API (8100) — только в compose-сети (`/api/*` через Next.js-rew
 ## 2. Установка
 
 ```bash
-# 1) остановить bare-vLLM (занимает GPU 0-3 и :8000)
+# 1) nvidia-container-toolkit (разово, ~2 мин; нужен sudo)
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+  | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+  sed 's#deb https://#deb [signed-by=/usr/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
+# проверка: sudo docker run --rm --gpus all ubuntu:24.04 nvidia-smi
+
+# 2) остановить bare-vLLM (занимает GPU 0-3 и :8000)
 #    (процесс от ~/bin/work-fp8.sh; Ctrl-C в терминале или kill <pid>)
 
-# 2) репозиторий + конфиг
+# 3) репозиторий + конфиг + окружение
 git clone <repo-url> llm-metrics && cd llm-metrics
 cp metrics.config.example.yaml metrics.config.yaml
+cp .env.example .env && $EDITOR .env     # VLLM_ENV_DIR / VLLM_SRC_DIR / MODELS_DIR / MODEL
 mkdir -p data
 ```
 
@@ -62,6 +73,28 @@ curl -s http://127.0.0.1:8000/v1/models        # vLLM отвечает (как �
 * 8 вкладок: Модель, GPU (5 GPU: 4xV100 под vLLM + RTX 2060), Система,
   Стоимость, Логи (идут строки vLLM через docker logs), Алерты, Health, Настройки;
 * бейджи vLLM/GPU/SYS — зелёные.
+
+## 4.1 Перенос на другой сервер (портативный деплой)
+
+В репо жёстко закодированных путей нет — всё через `.env`. На новом хосте:
+
+1. **Железо:** ≥4 GPU с достаточной VRAM (текущий профиль — 4xV100 32 ГБ
+   под `--tensor-parallel-size 4`), диск под модель и `./data`.
+2. **Софт:** Docker + NVIDIA-драйвер + nvidia-container-toolkit
+   (раздел 2, шаг 1) — 5 команд, разово.
+3. **Конвей vLLM (1Cat-vLLM):** готовый conda-env + исходники
+   (раздел 5 — либо перенос env, либо пересборка; см. примечание в §1).
+   Пути вписать в `VLLM_ENV_DIR` / `VLLM_SRC_DIR`.
+4. **Модель:** ~29 ГБ — `rsync -av --partial` с текущего сервера
+   (или скачать заново); путь — `MODELS_DIR` + `MODEL` в `.env`.
+5. **Код:** `git clone`, `cp metrics.config.example.yaml metrics.config.yaml`,
+   `cp .env.example .env` + заполнить, `make start`.
+6. **Проверка:** раздел 4.
+
+Что остаётся специфичным для «этого» сервера и переносится в `.env`:
+пути env/исходников/моделей, имя модели, профиль запуска (`VLLM_SCRIPT`).
+Остальное (API, web, БД, конфиг) переносится как есть; `./data` —
+скопировать, если хочется сохранить историю.
 
 ## 5. Обновление bare-окружения vLLM
 
