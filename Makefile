@@ -6,7 +6,7 @@ COMPOSE  ?= $(shell docker compose version >/dev/null 2>&1 && echo "docker compo
 MOCK_F   := -f docker-compose.yml -f docker-compose.mock.yml
 
 .PHONY: setup dev-api dev-web mock-vllm test-api alembic
-.PHONY: start down rebuild logs ps mock-start mock-down build build-bg install-toolkit gpu-check all
+.PHONY: start down rebuild logs ps mock-start mock-down build build-bg install install-toolkit gpu-check all
 
 # venv + зависимости API
 setup:
@@ -69,11 +69,20 @@ build:
 # Тот же build, но в фоне (переживает обрыв ssh); прогресс: tail -f build.log.
 # Если сборка упала: grep -nE "error:|Error|Killed|status 137" build.log | tail
 build-bg:
-	set -o pipefail; nohup $(COMPOSE) build --progress=plain 2>&1 | tee build.log >/dev/null &
+	nohup $(COMPOSE) build --progress=plain >build.log 2>&1 &
 	echo "build в фоне (PID $$!); следите: tail -f build.log"
+
+# Полный первичный деплой на новом сервере: .env + secrets + toolkit + образы + запуск.
+# Идемпотентно; после создания .env/secrets их заполнить под себя.
+install:
+	@test -f .env || { cp .env.example .env; echo "создан .env — заполнить MODELS_DIR/MODEL/VLLM_URL под свой сервер"; }
+	@test -f secrets/telegram_webhook.txt || { mkdir -p secrets; printf 'https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<CHAT>' > secrets/telegram_webhook.txt; echo "создан плейсхолдер secrets/telegram_webhook.txt — заменить на реальный webhook (или закомментировать секцию secrets: в docker-compose.yml)"; }
+	@$(MAKE) install-toolkit
+	@$(MAKE) up
 
 # Поднять стек (без пересборки; образы — make build)
 start:
+	@test -f secrets/telegram_webhook.txt || echo "ВНИМАНИЕ: secrets/telegram_webhook.txt не найден — создайте файл (URL Telegram-webhook) или закомментируйте секцию secrets: в docker-compose.yml"
 	$(COMPOSE) up -d
 
 # Первый деплой/после смены кода: образы + запуск
