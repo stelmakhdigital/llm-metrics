@@ -11,6 +11,9 @@ export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3}"
 export VLLM_SM70_FLASH_ATTN_V100=1
 export VLLM_SM70_NVFP4_TURBOMIND=1
 unset LD_LIBRARY_PATH VLLM_SM70_FLASHQLA_ORIGINAL_PREFILL VLLM_1CAT_ENABLE_SM70_MTP_DEFAULTS
+# triton/torch ищут libcuda.so.1 через ldconfig-кэш (пуст в чистом ubuntu)
+# или через LD_LIBRARY_PATH — указываем каталог, куда смонтирован libcuda
+export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
 
 MODEL="${MODEL:-/mnt/storage/models/Qwen3.8-27B-FP8}"
 PORT="${PORT:-8000}"

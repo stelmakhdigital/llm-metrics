@@ -6,6 +6,9 @@
 set -euo pipefail
 
 SCRIPT="${VLLM_SCRIPT:-fp8}"
+# регистрируем смонтированные libcuda/libnvidia-ml в ld-кэше: triton ищет
+# libcuda через `ldconfig -p`, а в чистом ubuntu кэш пуст
+ldconfig 2>/dev/null || true
 F="/scripts/${SCRIPT}.sh"
 if [ ! -f "$F" ]; then
   echo "entrypoint: нет скрипта $F" >&2
