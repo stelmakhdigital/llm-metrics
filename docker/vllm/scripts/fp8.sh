@@ -1,11 +1,11 @@
 #!/bin/bash
 # Вхендр vLLM-контейнера = ~/bin/work-fp8.sh (bare-запуск на сервере),
-# адаптированный под контейнер: conda-env хоста смонтирован в /opt/vllm-env,
-# исходники editable-установки — в /home/arkalaust/1Cat-vLLM (тот же путь,
-# что и .pth в site-packages), модель — в /mnt/storage/models (ro).
+# адаптированный под контейнер: vLLM собран в образ (venv /opt/venv),
+# модель — в /mnt/storage/models (ro), сервер слушает 127.0.0.1
+# (vLLM наружу не публикуется; api ходит в compose-сети по имени vllm).
 set -euo pipefail
 
-export PATH=/opt/vllm-env/bin:$PATH
+export PATH=/opt/venv/bin:$PATH
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3}"
 export VLLM_SM70_FLASH_ATTN_V100=1
@@ -46,5 +46,5 @@ exec python -m vllm.entrypoints.openai.api_server \
   --mm-processor-kwargs '{"truncation": false}' \
   --mm-encoder-tp-mode data \
   --mm-shm-cache-max-object-size-mb 256 \
-  --host 0.0.0.0 \
+  --host 127.0.0.1 \
   --port "$PORT"

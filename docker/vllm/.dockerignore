@@ -1,0 +1,6 @@
+# Контекст сборки — только Dockerfile, entrypoint.sh, scripts/
+.git
+*.md
+*.swp
+*.tmp
+.DS_Store
