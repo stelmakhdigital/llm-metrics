@@ -6,7 +6,7 @@ COMPOSE  ?= $(shell docker compose version >/dev/null 2>&1 && echo "docker compo
 MOCK_F   := -f docker-compose.yml -f docker-compose.mock.yml
 
 .PHONY: setup dev-api dev-web mock-vllm test-api alembic
-.PHONY: start down rebuild logs ps mock-start mock-down stage-vllm build install-toolkit gpu-check
+.PHONY: start down rebuild logs ps mock-start mock-down stage-vllm build install-toolkit gpu-check all
 
 # venv + зависимости API
 setup:
@@ -52,6 +52,12 @@ install-toolkit:
 # Проверка GPU-инжекта (нужен образ ubuntu:24.04, подтянется сам)
 gpu-check:
 	docker run --rm --gpus all ubuntu:24.04 nvidia-smi
+
+# Полный деплой с нуля: toolkit + staging + образы + запуск.
+# Идемпотентно (повторный запуск безопасен), но `build` при каждом прогоне
+# передаёт ~15 ГБ контекста в docker-демон (несколько минут).
+# Для повседневного старта достаточно: make start
+all: install-toolkit stage-vllm up
 
 # Впечь conda-env 1Cat-vLLM + исходники в контекст сборки (hard-links, ноль
 # доп. дисков; нужен .env с VLLM_ENV_DIR/VLLM_SRC_DIR; после обновления env
