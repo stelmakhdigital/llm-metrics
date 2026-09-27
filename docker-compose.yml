@@ -34,6 +34,8 @@ services:
       VLLM_SCRIPT: ${VLLM_SCRIPT:-fp8}
       MODEL: ${MODEL:-/mnt/storage/models/Qwen3.8-27B-FP8}
       SERVED_NAME: ${SERVED_NAME:-}
+      # для диагностики NCCL: в .env поставить NCCL_DEBUG=INFO (потом убрать)
+      NCCL_DEBUG: ${NCCL_DEBUG:-}
       PORT: "8000"
     volumes:
       # Пути хоста — из .env (пример: .env.example):
