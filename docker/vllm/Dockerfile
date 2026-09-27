@@ -60,11 +60,15 @@ RUN git init /build/vllm \
 # повторная загрузка не происходит.
 # Rust-фронтенд (vllm-rs) в форке опционален (VLLM_USE_RUST_FRONTEND=1,
 # по умолчанию выключен) — cargo/rustup не ставим.
-# VLLM_MAX_JOBS=4: по умолчанию ninja гоняет nproc (28) nvcc-процессов по несколько
-# ГБ RAM каждый → OOM-киллер (exit 137) на середине компиляции.
+# Параллелизация компиляции: по умолчанию ninja гоняет nproc (28) nvcc-процессов
+# по несколько ГБ RAM каждый → OOM-киллер (exit 137) на середине компиляции.
+# setup.py форка читает MAX_JOBS (в стандартном vllm — VLLM_MAX_JOBS), задаём оба.
+# Переопределение: make build-bg VLLM_MAX_JOBS=2
+ARG VLLM_MAX_JOBS=4
 RUN TORCH_CUDA_ARCH_LIST=7.0 \
     CMAKE_CUDA_ARCHITECTURES=70 \
-    VLLM_MAX_JOBS=4 \
+    MAX_JOBS=${VLLM_MAX_JOBS} \
+    VLLM_MAX_JOBS=${VLLM_MAX_JOBS} \
     pip install --no-build-isolation /build/vllm
 
 # ------------------------------------------------------------- runtime stage
