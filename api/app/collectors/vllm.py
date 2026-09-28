@@ -13,6 +13,9 @@
   ``num_preemptions_rate``;
 * ``prefix_hit_rate`` — ratio hits_rate/queries_rate за интервал (0..1,
   та же шкала, что live-KPI/карточка и период в ``model_api``);
+* ``prefix_hit_rate_60s`` — rolling за последние ~60 с (Δhits/Δqueries от
+  самой старой точки окна; история ~90 с, на рестарт/нехватку истории —
+  отсутствует);
 * **сырые** счётчики (для токенизатора/периодов): ``*_total`` как есть;
 * finish reasons: сырые счётчики ``request_success_total_{reason}``
   (stop/length/abort/error/... — любой лейбл ``finished_reason``);
@@ -99,6 +102,7 @@ SNAPSHOT_METRIC_NAMES: set[str] = (
     {logical for logical, _, _ in GAUGES}
     | {rate for rate, _, _ in COUNTERS}
     | {f"{base}_{sfx}" for base, _ in HISTOGRAMS for sfx in ("p50", "p95")}
+    | {"prefix_hit_rate_60s"}
 )
 
 
@@ -149,6 +153,8 @@ class VllmCollector:
     def __init__(self, cfg: VllmSource):
         self.cfg = cfg
         self._prev: dict[str, tuple[int, float]] = {}  # raw name -> (ts, value)
+        # История (ts, hits_total, queries_total) для rolling prefix hit rate ~60 с
+        self._pfx_hist: list[tuple[int, float, float]] = []
         self.model_name: str | None = None  # кэш последнего известного имени
         # Кэш последнего снимка (F1, docs/api-contracts.md): без SQL читают
         # SSE /api/live и API. {"ts", "model", "metrics": {имя: значение}}
@@ -180,6 +186,7 @@ class VllmCollector:
 
         # Счётчики: сырые значения + rates с защитой от рестарта
         rate_values: dict[str, float] = {}
+        raw_values: dict[str, float] = {}
         for rate_name, raw_name, candidates in COUNTERS:
             raw = None
             for name in candidates:
@@ -188,6 +195,7 @@ class VllmCollector:
                     break
             if raw is None:
                 continue
+            raw_values[raw_name] = raw
             samples.append(Sample(raw_name, now, raw, "vllm", None, model))
             prev = self._prev.get(raw_name)
             if prev is not None:
@@ -208,6 +216,25 @@ class VllmCollector:
         h = rate_values.get("prefix_cache_hits_rate")
         if q and h is not None:
             samples.append(Sample("prefix_hit_rate", now, h / q, "vllm", None, model))
+
+        # Rolling prefix hit rate за последние ~60 с (сглаживание live-карточки)
+        h_raw = raw_values.get("prefix_cache_hits_total")
+        q_raw = raw_values.get("prefix_cache_queries_total")
+        if h_raw is not None and q_raw is not None:
+            hist = self._pfx_hist
+            if hist and (h_raw < hist[-1][1] or q_raw < hist[-1][2]):
+                hist.clear()  # рестарт vLLM — счётчики упали
+            hist.append((now, h_raw, q_raw))
+            while hist and now - hist[0][0] > 90:
+                hist.pop(0)
+            base = next((pt for pt in reversed(hist[:-1]) if now - pt[0] >= 60), None)
+            if base is not None:
+                dq = q_raw - base[2]
+                dh = h_raw - base[1]
+                if dq > 0 and dh >= 0:
+                    samples.append(
+                        Sample("prefix_hit_rate_60s", now, dh / dq, "vllm", None, model)
+                    )
 
         # Finish reasons — сырые счётчики с суффиксом {reason}
         met = metrics.get(FINISH_REASON_METRIC)

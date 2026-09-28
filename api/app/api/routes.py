@@ -654,13 +654,18 @@ def _build_live_packet(request: Request) -> dict[str, Any]:
         m = v.get("metrics", {})
         q = m.get("prefix_cache_queries_rate")
         h = m.get("prefix_cache_hits_rate")
+        rolling = m.get("prefix_hit_rate_60s")  # сглаживание ~60 с (коллектор)
         kpi = {
             "running": m.get("num_requests_running"),
             "waiting": m.get("num_requests_waiting"),
             "prompt_rate": m.get("prompt_tokens_rate"),
             "gen_rate": m.get("generation_tokens_rate"),
             "kv_cache": m.get("kv_cache_usage"),
-            "prefix_hit_rate": (h / q) if (q and h is not None) else None,
+            "prefix_hit_rate": (
+                rolling
+                if rolling is not None
+                else ((h / q) if (q and h is not None) else None)
+            ),
             "ttft_p95": m.get("ttft_p95"),
             "tpot_p95": m.get("tpot_p95"),
             "e2e_p95": m.get("e2e_latency_p95"),

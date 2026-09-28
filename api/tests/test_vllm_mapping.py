@@ -129,6 +129,39 @@ def test_model_fallback_to_config():
     assert samples[0].model == "configured-model"
 
 
+def _pfx_text(hits: float, queries: float) -> str:
+    return (
+        "# TYPE vllm:prefix_cache_hits_total counter\n"
+        f'vllm:prefix_cache_hits_total{{engine="0",model_name="m1"}} {hits:.1f}\n'
+        "# TYPE vllm:prefix_cache_queries_total counter\n"
+        f'vllm:prefix_cache_queries_total{{engine="0",model_name="m1"}} {queries:.1f}\n'
+    )
+
+
+def test_prefix_hit_rate_60s_rolling():
+    """Сглаживание live-карточки: после «холодного» 5-с окна (queries>0,
+    hits=0) 5-с rate = 0, но rolling ~60 с — не 0; на рестарт счётчиков —
+    история очищается и rolling не считается."""
+    import asyncio
+
+    async def run():
+        col = VllmCollector(VllmSource())
+        await col.poll(FakeClient(_pfx_text(0.0, 0.0)), now=1000)
+        await col.poll(FakeClient(_pfx_text(160.0, 200.0)), now=1060)
+        # «холодное» 5-с окно: queries 200→204, hits 160→160
+        s3 = await col.poll(FakeClient(_pfx_text(160.0, 204.0)), now=1065)
+        m3 = by_metric(s3)
+        assert m3["prefix_hit_rate"].value == pytest.approx(0.0)
+        # rolling 60 с: (160-0)/(204-0), не 0
+        assert m3["prefix_hit_rate_60s"].value == pytest.approx(160.0 / 204.0)
+        assert "prefix_hit_rate_60s" in col.last_snapshot["metrics"]
+        # рестарт: счётчики упали → история очищена, rolling отсутствует
+        s4 = await col.poll(FakeClient(_pfx_text(1.0, 2.0)), now=1070)
+        assert "prefix_hit_rate_60s" not in by_metric(s4)
+
+    asyncio.run(run())
+
+
 def test_token_bucket_counters_stored():
     """Кумулятивные счётчики bucket'ов длин prompt/generation (F1):
     ``request_prompt_tokens_bucket_{le}`` / ``request_generation_tokens_bucket_{le}``,

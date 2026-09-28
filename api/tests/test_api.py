@@ -377,6 +377,27 @@ def test_live_sse_packet_from_snapshots(live_server, monkeypatch):
     assert p["system"] == {"cpu": 12.5, "load1": 1.2, "ram_used_mib": 8192.0, "ram_total_mib": 65536.0}
 
 
+def test_live_sse_prefix_hit_rate_rolling(live_server, monkeypatch):
+    # «Холодное» 5-с окно (hits_rate=0): карточка берёт rolling ~60 с из снимка
+    from app.api import routes
+
+    monkeypatch.setattr(routes, "LIVE_INTERVAL_S", 0.2)
+    app = live_server["app"]
+    app.state.snapshots["vllm"] = {
+        "ts": NOW,
+        "model": "m",
+        "metrics": {
+            "prefix_cache_hits_rate": 0.0,
+            "prefix_cache_queries_rate": 10.0,
+            "prefix_hit_rate_60s": 0.82,
+        },
+    }
+    app.state.statuses["vllm"].ok()
+
+    packets = _read_packets(live_server, 1)
+    assert packets[0]["kpi"]["prefix_hit_rate"] == pytest.approx(0.82)
+
+
 def test_live_sse_mixed_sources_offline(live_server, monkeypatch):
     # vLLM online, GPU/system offline → их блоки null
     from app.api import routes
