@@ -62,18 +62,18 @@ gpu-check:
 all: install-toolkit up
 
 # Параллелизация CUDA-компиляции vLLM (нужна RAM ~2-4 ГБ на nvcc-процесс).
-# Если сборка упала OOM ("Killed"/exit 137 в build.log) — уменьшить: VLLM_MAX_JOBS=2.
-VLLM_MAX_JOBS ?= 4
+# Если сборка упала OOM ("Killed"/exit 137 в build.log) — уменьшить:
+#   VLLM_MAX_JOBS=2 make build-bg
+# (compose подставит значения из env; пин vLLM: VLLM_REF=<sha> make build)
 
 # Пересобрать все образы (контексты сборки маленькие — сборка быстрая).
-# Пин версии vLLM: docker compose build --build-arg VLLM_REF=<git sha> vllm
 build:
-	$(COMPOSE) build --build-arg VLLM_MAX_JOBS=$(VLLM_MAX_JOBS)
+	$(COMPOSE) build
 
 # Тот же build, но в фоне (переживает обрыв ssh); прогресс: tail -f build.log.
 # Если сборка упала: grep -nE "error:|Error|Killed|status 137" build.log | tail
 build-bg:
-	nohup $(COMPOSE) build --progress=plain --build-arg VLLM_MAX_JOBS=$(VLLM_MAX_JOBS) >build.log 2>&1 &
+	nohup $(COMPOSE) build --progress=plain >build.log 2>&1 &
 	echo "build в фоне (PID $$!); следите: tail -f build.log"
 
 # Полный первичный деплой на новом сервере: .env + secrets + toolkit + образы + запуск.

@@ -38,6 +38,12 @@ services:
   vllm:
     build:
       context: ./docker/vllm
+      args:
+        # пин форка 1Cat-vLLM (по умолчанию — head main, 2026-07-14)
+        VLLM_REF: ${VLLM_REF:-14abfc27ee4e13cd2a9d1a8a882f36a629e5889a}
+        # параллелизация CUDA-компиляции (RAM ~2-4 ГБ на nvcc-процесс);
+        # при OOM (Killed/137 в build.log): VLLM_MAX_JOBS=2 make build-bg
+        VLLM_MAX_JOBS: ${VLLM_MAX_JOBS:-4}
     image: llm-metrics-vllm:latest
     container_name: vllm
     environment:
