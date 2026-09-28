@@ -98,7 +98,7 @@ export function periodKpiCards(kpi: ModelKpi, spanSec: number): KpiDef[] {
       sub: `p50: ${fmtLatency(kpi.tpot_p50)}`,
     },
     { label: "E2E p95", value: fmtLatency(kpi.e2e_p95) },
-    { label: "KV cache (средняя)", value: fmtPct(kpi.kv_cache), progress: kpi.kv_cache },
+    { label: "KV cache (последнее)", value: fmtPct(kpi.kv_cache), progress: kpi.kv_cache },
     { label: "Prefix cache hit rate", value: fmtRatio(kpi.prefix_hit_rate) },
     { label: "Preemptions (сумма)", value: fmtInt(kpi.preemptions) },
     { label: "Завершено запросов (сумма)", value: fmtInt(kpi.requests_finished) },
