@@ -16,13 +16,25 @@ export interface UPlotChartProps {
   height?: number;
   /** live-режим: окно за последние ~5 минут, без выбора/перетаскивания */
   live?: boolean;
+  /** stacked: серии складываются (y.min фиксируется в 0) */
+  stack?: boolean;
 }
 
 /**
  * Базовая обёртка uPlot: общий временной ось по объединению ts всех серий,
  * пропуски (null) рисуются разрывами. Пересоздаёт график при смене данных.
  */
-export default function UPlotChart({ series, height = 220, live = false }: UPlotChartProps) {
+/** Метки оси X: HH:MM на коротких окнах, даты — на длинных (локальное время). */
+function fmtAxisTime(ts: number, spanS: number): string {
+  const d = new Date(ts * 1000);
+  const p = (n: number) => String(n).padStart(2, "0");
+  if (spanS <= 36 * 3600) return `${p(d.getHours())}:${p(d.getMinutes())}`;
+  if (spanS <= 14 * 86400)
+    return `${p(d.getDate())}.${p(d.getMonth() + 1)} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  return `${p(d.getDate())}.${p(d.getMonth() + 1)}`;
+}
+
+export default function UPlotChart({ series, height = 220, live = false, stack = false }: UPlotChartProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<uPlot | null>(null);
 
@@ -44,7 +56,12 @@ export default function UPlotChart({ series, height = 220, live = false }: UPlot
       height,
       series: [
         { label: "" },
-        ...series.map((s) => ({ label: s.name, stroke: s.color, width: 1.5 })),
+        ...series.map((s) => ({
+          label: s.name,
+          stroke: s.color,
+          width: 1.5,
+          ...(stack ? { stack: true } : {}),
+        })),
       ],
       scales: {
         x: {
@@ -54,10 +71,18 @@ export default function UPlotChart({ series, height = 220, live = false }: UPlot
             ? { auto: false, min: xs[xs.length - 1] - 300, max: xs[xs.length - 1] }
             : { auto: true }),
         },
-        y: { auto: true },
+        y: { auto: true, ...(stack ? { min: 0 } : {}) },
       },
       axes: [
-        { stroke: "#8b8b93", size: 36, grid: { show: false } },
+        {
+          stroke: "#8b8b93",
+          size: 36,
+          grid: { show: false },
+          // дефолтный формат uPlot — англ. 12ч («12pm/4am») — заменяем
+          ...(xs.length > 0
+            ? { fmtTime: (ts: number) => fmtAxisTime(ts, xs[xs.length - 1] - xs[0]) }
+            : {}),
+        },
         {
           stroke: "#8b8b93",
           font: "11px system-ui",
@@ -76,7 +101,7 @@ export default function UPlotChart({ series, height = 220, live = false }: UPlot
       chart.destroy();
       chartRef.current = null;
     };
-  }, [series, height, live]);
+  }, [series, height, live, stack]);
 
   return (
     <div ref={hostRef} className="w-full" style={{ height }} />
