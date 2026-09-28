@@ -10,6 +10,26 @@ def test_short_series_unchanged():
     assert downsample(pts) is pts
 
 
+def test_slightly_over_max():
+    # n чуть больше лимита: ≤ ~2*(max_points//2) точек, а не «пара точек»
+    n = 1800
+    pts = [[i, float(i)] for i in range(n)]
+    out = downsample(pts)
+    assert len(out) <= MAX_POINTS + 10
+    assert len(out) >= n // 2
+    assert out[0] == pts[0]
+    assert out[-1] == pts[-1]
+
+
+def test_large_series_bound():
+    n = 100_000
+    pts = [[i, math.sin(i / 100.0)] for i in range(n)]
+    out = downsample(pts)
+    assert len(out) <= MAX_POINTS + 10
+    assert out[0] == pts[0]
+    assert out[-1] == pts[-1]
+
+
 def test_bounds_and_shape():
     n = 5000
     pts = [[i, math.sin(i / 50.0)] for i in range(n)]

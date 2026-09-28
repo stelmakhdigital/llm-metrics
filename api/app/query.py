@@ -18,8 +18,8 @@ def downsample(points: list[list[float]], max_points: int = MAX_POINTS) -> list[
     n = len(points)
     if n <= max_points:
         return points
-    half = max(1, max_points // 2)
-    buckets = (n + half - 1) // half
+    # бакетов = max_points//2 → до 2 точек (ло/хай) на бакет → ≤ ~max_points
+    buckets = max(1, max_points // 2)
     size = (n + buckets - 1) // buckets
 
     def push(out: list, p) -> None:
