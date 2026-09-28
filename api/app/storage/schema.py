@@ -21,6 +21,7 @@ SCHEMA_STATEMENTS: list[str] = [
     CREATE TABLE IF NOT EXISTS metric_hourly (
         metric TEXT    NOT NULL,
         hour INTEGER   NOT NULL,  -- epoch начала часа (UTC)
+        gpu INTEGER,              -- индекс GPU (gpu-метрики), иначе NULL
         avg REAL,
         min REAL,
         max REAL,
@@ -28,11 +29,13 @@ SCHEMA_STATEMENTS: list[str] = [
         count INTEGER
     )
     """,
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_metric_hourly_metric_hour ON metric_hourly(metric, hour)",
+    # COALESCE(gpu, -1): для gpu=NULL — одна строка на (metric, hour)
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_metric_hourly_metric_hour ON metric_hourly(metric, hour, COALESCE(gpu, -1))",
     """
     CREATE TABLE IF NOT EXISTS metric_daily (
         metric TEXT    NOT NULL,
         day INTEGER    NOT NULL,  -- epoch начала суток (UTC)
+        gpu INTEGER,              -- индекс GPU (gpu-метрики), иначе NULL
         avg REAL,
         min REAL,
         max REAL,
@@ -41,7 +44,7 @@ SCHEMA_STATEMENTS: list[str] = [
         count INTEGER
     )
     """,
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_metric_daily_metric_day ON metric_daily(metric, day)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_metric_daily_metric_day ON metric_daily(metric, day, COALESCE(gpu, -1))",
     """
     CREATE TABLE IF NOT EXISTS tokens (
         ts INTEGER               NOT NULL,  -- epoch начала часа (UTC)

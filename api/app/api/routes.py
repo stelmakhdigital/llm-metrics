@@ -201,6 +201,29 @@ def _ts(last, metric: str, gid: int | None) -> Any:
     return e[0] if e else None
 
 
+async def _aggregate_series(
+    db, table: str, col: str, metric: str, gpu: int | None, start: int, to: int
+) -> list[dict[str, Any]]:
+    """Строки (col, avg) из metric_hourly/metric_daily.
+
+    ``gpu`` задан — только эта gpu; иначе — AVG по строкам gpu за окно
+    (для не-GPU-метрик одна строка с gpu=NULL — как раньше)."""
+    if gpu is not None:
+        sql = (
+            f"SELECT {col}, avg FROM {table} "
+            f"WHERE metric = ? AND gpu = ? AND {col} >= ? AND {col} < ? ORDER BY {col}"
+        )
+        params: tuple = (metric, gpu, start, to)
+    else:
+        sql = (
+            f"SELECT {col}, AVG(avg) AS avg FROM {table} "
+            f"WHERE metric = ? AND {col} >= ? AND {col} < ? "
+            f"GROUP BY {col} ORDER BY {col}"
+        )
+        params = (metric, start, to)
+    return rows_to_dicts(await db.execute_fetchall(sql, params))
+
+
 # --------------------------------------------------------------------- health
 @router.get("/health")
 async def health(request: Request) -> dict[str, Any]:
@@ -375,43 +398,27 @@ async def metric_series(
         source = "raw"
         if not points:
             # Сырые могли быть очищены ретенцией — падаем на hourly
-            rows = rows_to_dicts(
-                await db.execute_fetchall(
-                    """SELECT hour, avg FROM metric_hourly
-                       WHERE metric = ? AND hour >= ? AND hour < ? ORDER BY hour""",
-                    (metric, (from_ // 3600) * 3600, to),
-                )
+            rows = await _aggregate_series(
+                db, "metric_hourly", "hour", metric, gpu, (from_ // 3600) * 3600, to
             )
             points = [[r["hour"] + 1800, r["avg"]] for r in rows if r["avg"] is not None]
             source = "hourly"
     elif span <= HOURLY_MAX_SPAN_S:
-        rows = rows_to_dicts(
-            await db.execute_fetchall(
-                """SELECT hour, avg FROM metric_hourly
-                   WHERE metric = ? AND hour >= ? AND hour < ? ORDER BY hour""",
-                (metric, (from_ // 3600) * 3600, to),
-            )
+        rows = await _aggregate_series(
+            db, "metric_hourly", "hour", metric, gpu, (from_ // 3600) * 3600, to
         )
         points = [[r["hour"] + 1800, r["avg"]] for r in rows if r["avg"] is not None]
         source = "hourly"
     else:
-        rows = rows_to_dicts(
-            await db.execute_fetchall(
-                """SELECT day, avg FROM metric_daily
-                   WHERE metric = ? AND day >= ? AND day < ? ORDER BY day""",
-                (metric, (from_ // 86400) * 86400, to),
-            )
+        rows = await _aggregate_series(
+            db, "metric_daily", "day", metric, gpu, (from_ // 86400) * 86400, to
         )
         points = [[r["day"] + 43200, r["avg"]] for r in rows if r["avg"] is not None]
         source = "daily"
         if not points:
             # daily ещё не накоплен — падаем на hourly
-            rows = rows_to_dicts(
-                await db.execute_fetchall(
-                    """SELECT hour, avg FROM metric_hourly
-                       WHERE metric = ? AND hour >= ? AND hour < ? ORDER BY hour""",
-                    (metric, (from_ // 3600) * 3600, to),
-                )
+            rows = await _aggregate_series(
+                db, "metric_hourly", "hour", metric, gpu, (from_ // 3600) * 3600, to
             )
             points = [[r["hour"] + 1800, r["avg"]] for r in rows if r["avg"] is not None]
             source = "hourly"

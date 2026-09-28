@@ -55,6 +55,49 @@ async def test_hourly_skips_open_window(agg, db):
     assert len(await db.execute_fetchall("SELECT * FROM metric_hourly")) == 0
 
 
+async def test_hourly_multigpu(agg, db):
+    # gpu-метрики — отдельная строка на (metric, hour, gpu); остальные — gpu=NULL
+    rows = []
+    for i in range(10):
+        rows.append(("gpu_power", HOUR + i * 60, 300.0, "gpu", 0, None))
+        rows.append(("gpu_power", HOUR + i * 60, 500.0, "gpu", 1, None))
+        rows.append(("cpu_usage", HOUR + i * 60, 10.0, "system", None, None))
+    await seed_samples_aio(db, rows)
+    assert await agg._aggregate_hourly(NOW) == 3  # gpu_power×2 gpu + cpu_usage
+    got = {
+        (dict(r)["metric"], dict(r)["gpu"]): dict(r)
+        for r in await db.execute_fetchall(
+            "SELECT * FROM metric_hourly WHERE hour=?", (HOUR,)
+        )
+    }
+    assert set(got) == {("gpu_power", 0), ("gpu_power", 1), ("cpu_usage", None)}
+    assert got[("gpu_power", 0)]["avg"] == pytest.approx(300.0)
+    assert got[("gpu_power", 0)]["count"] == 10
+    assert got[("gpu_power", 1)]["avg"] == pytest.approx(500.0)
+    assert got[("cpu_usage", None)]["avg"] == pytest.approx(10.0)
+
+
+async def test_daily_multigpu(agg, db):
+    # daily — раздельно по gpu: avg по hourly per-gpu
+    rows = []
+    for h in range(8):
+        rows.append(("gpu_power", DAY + h * 3600 + 1800, 300.0, "gpu", 0, None))
+        rows.append(("gpu_power", DAY + h * 3600 + 1800, 500.0, "gpu", 1, None))
+    await seed_samples_aio(db, rows)
+    assert await agg._aggregate_hourly(NOW) == 16  # 8 часов × 2 gpu
+    assert await agg._aggregate_daily(NOW) == 2
+    got = {
+        dict(r)["gpu"]: dict(r)
+        for r in await db.execute_fetchall(
+            "SELECT * FROM metric_daily WHERE metric='gpu_power'"
+        )
+    }
+    assert got[0]["avg"] == pytest.approx(300.0)
+    assert got[1]["avg"] == pytest.approx(500.0)
+    assert got[0]["sum"] == pytest.approx(2400.0)
+    assert got[0]["count"] == 8
+
+
 async def test_daily_from_hourly(agg, db):
     rows = []
     for h in range(8):  # 8 часов (>= MIN_HOURLY_PER_DAY)

@@ -3,10 +3,12 @@
 Запускается раз в 5 минут («catch-up» цикл):
 * для каждого закрытого часового окна, в котором есть сырые выборки и ещё нет
   строки в ``metric_hourly`` — avg/min/max/p95/count (p95 — линейная
-  интерполяция по сортированным точкам окна);
+  интерполяция по сортированным точкам окна); gpu-метрики (``gpu IS NOT NULL``
+  в raw) — отдельная строка на (metric, hour, gpu), остальные — gpu=NULL;
 * для закрытых суток без строки в ``metric_daily`` — сводка из
   ``metric_hourly`` (min = min(min), max = max(max), avg/p95/sum — средневзвешенные
-  по count; день пишется, когда в окне не меньше ``min_hourly`` часов);
+  по count; день пишется, когда в окне не меньше ``min_hourly`` часов),
+  так же раздельно по gpu;
 * для закрытых часов без строки в ``tokens`` — дельты сырых счётчиков
   vLLM (prompt/completion токены, завершённые запросы по finish reasons)
   между последним значением до окна и последним внутри окна;
@@ -20,6 +22,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+from collections import defaultdict
 
 from .config import Retention
 from .storage.db import rows_to_dicts
@@ -75,117 +78,112 @@ class Aggregator:
 
     # --------------------------------------------------------------- hourly
     async def _aggregate_hourly(self, now: int) -> int:
-        """Закрывающиеся часы: newest-first, не более MAX_HOURS_PER_CYCLE."""
+        """Закрывающиеся часы: newest-first, не более MAX_HOURS_PER_CYCLE.
+
+        Выборки группируются по (metric, gpu): gpu-метрики получают отдельную
+        строку на gpu, остальные — gpu=NULL."""
         last_closed_hour = (now // 3600) * 3600  # окно [H, H+3600) с H < now
         horizon = last_closed_hour - MAX_HOURS_PER_CYCLE * 3600
         written = 0
         for hour in range(last_closed_hour - 3600, horizon - 3600, -3600):
-            metrics = rows_to_dicts(
+            rows = rows_to_dicts(
                 await self.conn.execute_fetchall(
-                    """SELECT DISTINCT metric FROM metric_samples
-                       WHERE ts >= ? AND ts < ?""",
+                    """SELECT metric, COALESCE(gpu, -1) AS g, value
+                       FROM metric_samples WHERE ts >= ? AND ts < ?""",
                     (hour, hour + 3600),
                 )
             )
-            if not metrics:
+            if not rows:
                 continue
-            for row in metrics:
-                if await self._hourly_exists(row["metric"], hour):
+            groups: dict[tuple[str, int], list[float]] = defaultdict(list)
+            for r in rows:
+                groups[(r["metric"], r["g"])].append(r["value"])
+            for (metric, g), values in groups.items():
+                gpu = None if g == -1 else g
+                if await self._hourly_exists(metric, hour, gpu):
                     continue
-                stats = await self._hourly_stats(row["metric"], hour)
-                if stats is None:
-                    continue
+                values.sort()
+                n = len(values)
                 await self.conn.execute(
                     """INSERT INTO metric_hourly
-                         (metric, hour, avg, min, max, p95, count)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                         (metric, hour, gpu, avg, min, max, p95, count)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        row["metric"],
+                        metric,
                         hour,
-                        stats["avg"],
-                        stats["min"],
-                        stats["max"],
-                        stats["p95"],
-                        stats["count"],
+                        gpu,
+                        sum(values) / n,
+                        values[0],
+                        values[-1],
+                        p95_of_sorted(values),
+                        n,
                     ),
                 )
                 written += 1
         await self.conn.commit()
         return written
 
-    async def _hourly_exists(self, metric: str, hour: int) -> bool:
+    @staticmethod
+    def _gpu_cond(gpu: int | None) -> tuple[str, tuple]:
+        """SQL-фрагмент условия по gpu (NULL-safe)."""
+        if gpu is None:
+            return " AND gpu IS NULL", ()
+        return " AND gpu = ?", (gpu,)
+
+    async def _hourly_exists(self, metric: str, hour: int, gpu: int | None) -> bool:
+        cond, params = self._gpu_cond(gpu)
         cur = await self.conn.execute_fetchall(
-            "SELECT 1 FROM metric_hourly WHERE metric = ? AND hour = ?",
-            (metric, hour),
+            f"SELECT 1 FROM metric_hourly WHERE metric = ? AND hour = ?{cond}",
+            (metric, hour, *params),
         )
         return len(cur) > 0
 
-    async def _hourly_stats(self, metric: str, hour: int) -> dict[str, float] | None:
-        cur = await self.conn.execute_fetchall(
-            """SELECT count(*) AS n, min(value) AS mn, max(value) AS mx, avg(value) AS av
-               FROM metric_samples WHERE metric = ? AND ts >= ? AND ts < ?""",
-            (metric, hour, hour + 3600),
-        )
-        row = rows_to_dicts(cur)[0]
-        n = row["n"]
-        if n == 0:
-            return None
-        # p95 — по точкам окна (линейная интерполяция, метод ТЗ §5.2)
-        vals = rows_to_dicts(
-            await self.conn.execute_fetchall(
-                "SELECT value FROM metric_samples WHERE metric = ? AND ts >= ? AND ts < ? ORDER BY value",
-                (metric, hour, hour + 3600),
-            )
-        )
-        values = [r["value"] for r in vals]
-        return {
-            "avg": row["av"],
-            "min": row["mn"],
-            "max": row["mx"],
-            "p95": p95_of_sorted(values),
-            "count": n,
-        }
-
     # --------------------------------------------------------------- daily
     async def _aggregate_daily(self, now: int) -> int:
-        """Сутки из hourly (только закрытые; горизонт — ретенция hourly)."""
+        """Сутки из hourly (только закрытые; горизонт — ретенция hourly).
+
+        Сводка — раздельно по (metric, gpu): gpu-метрики — отдельная
+        суточная строка на gpu (avg по hourly per-gpu, взвешенно по count)."""
         last_closed_day = (now // 86400) * 86400
         horizon = last_closed_day - (self.ret.hourly_days + 1) * 86400
         written = 0
         for day in range(last_closed_day - 86400, horizon - 86400, -86400):
             metrics = rows_to_dicts(
                 await self.conn.execute_fetchall(
-                    """SELECT metric, count(*) AS n
+                    """SELECT metric, COALESCE(gpu, -1) AS g, count(*) AS n
                        FROM metric_hourly
                        WHERE hour >= ? AND hour < ?
-                       GROUP BY metric""",
+                       GROUP BY metric, COALESCE(gpu, -1)""",
                     (day, day + 86400),
                 )
             )
             for row in metrics:
                 if row["n"] < MIN_HOURLY_PER_DAY:
                     continue  # не хватит данных — дождёмся
+                gpu = None if row["g"] == -1 else row["g"]
+                gcond, gparams = self._gpu_cond(gpu)
                 cur = await self.conn.execute_fetchall(
-                    "SELECT 1 FROM metric_daily WHERE metric = ? AND day = ?",
-                    (row["metric"], day),
+                    f"SELECT 1 FROM metric_daily WHERE metric = ? AND day = ?{gcond}",
+                    (row["metric"], day, *gparams),
                 )
                 if cur:
                     continue
                 s = rows_to_dicts(
                     await self.conn.execute_fetchall(
-                        """SELECT avg(avg) AS av, min(min) AS mn, max(max) AS mx,
-                                  avg(p95) AS p95, sum(avg * count) AS sm, sum(count) AS ct
-                           FROM metric_hourly WHERE metric = ? AND hour >= ? AND hour < ?""",
-                        (row["metric"], day, day + 86400),
+                        f"""SELECT avg(avg) AS av, min(min) AS mn, max(max) AS mx,
+                                   avg(p95) AS p95, sum(avg * count) AS sm, sum(count) AS ct
+                           FROM metric_hourly WHERE metric = ? AND hour >= ? AND hour < ?{gcond}""",
+                        (row["metric"], day, day + 86400, *gparams),
                     )
                 )[0]
                 if not s["ct"]:
                     continue
                 await self.conn.execute(
                     """INSERT INTO metric_daily
-                         (metric, day, avg, min, max, p95, sum, count)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (row["metric"], day, s["av"], s["mn"], s["mx"], s["p95"], s["sm"], s["ct"]),
+                         (metric, day, gpu, avg, min, max, p95, sum, count)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (row["metric"], day, gpu, s["av"], s["mn"], s["mx"],
+                     s["p95"], s["sm"], s["ct"]),
                 )
                 written += 1
         await self.conn.commit()
