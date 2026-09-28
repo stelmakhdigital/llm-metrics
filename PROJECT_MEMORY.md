@@ -113,6 +113,10 @@ PROJECT_MEMORY.md              # этот файл
 - Ограничения: без docker локально (test через pytest + next build).
 - vLLM-форк: 1CatAI/1Cat-vLLM (SM70-оптимизации, NVFP4, DFlash2, FP8-инфра) — установлен в conda-окружении хоста; docker-сборка (docker/vllm) отменена после OOM.
 
+## F6 (2026-09-28): доработка живого дашборда
+- Диагностика прод (192.168.1.114): Live SSE ломался gzip-компрессией Next (fix: `compress: false`); GPU-периоды — parsePoints ждал {ts,value} вместо кортежей; имена метрик: `gpu_clock_sm` (не gpu_sm_clock), `e2e_latency_p95` (не e2e_p95); prefix_hit_rate не персистился; порог ttft_high 2с→120с. Детали — roadmap.md F6.
+- Деплой: прод-репо /home/arkalaust/Code/llm-metrics на 192.168.1.114 (git pull + docker compose build), доступ `ssh -p 2214 arkalaust@192.168.1.114`.
+
 ## Следующие шаги (roadmap.md → Ф5)
 
 1. На GPU-сервере: `git pull` (схема vLLM-на-хосте, `9a3673b`); проверить что в `~/bin/work-fp8.sh` bind **0.0.0.0** (не 127.0.0.1).
