@@ -149,7 +149,7 @@ export function GpuPeriod({ from, to }: { from: number; to: number }) {
         const rows: Record<number, MetricPoint[]> = {};
         await Promise.all(
           gpus.map(async (g) => {
-            const cacheKey = `${m.id}:${g.id}`;
+            const cacheKey = `${m.id}:${g.id}:${from}:${to}`;
             const cached = cacheRef.current[cacheKey];
             if (cached) {
               rows[g.id] = cached;
