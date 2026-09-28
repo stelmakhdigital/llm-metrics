@@ -11,6 +11,8 @@
   пропускается): ``prompt_tokens_rate``, ``generation_tokens_rate``,
   ``prefix_cache_queries_rate``, ``prefix_cache_hits_rate``,
   ``num_preemptions_rate``;
+* ``prefix_hit_rate`` — ratio hits_rate/queries_rate за интервал (0..1,
+  та же шкала, что live-KPI/карточка и период в ``model_api``);
 * **сырые** счётчики (для токенизатора/периодов): ``*_total`` как есть;
 * finish reasons: сырые счётчики ``request_success_total_{reason}``
   (stop/length/abort/error/... — любой лейбл ``finished_reason``);
@@ -177,6 +179,7 @@ class VllmCollector:
                 samples.append(Sample(logical, now, val * scale, "vllm", None, model))
 
         # Счётчики: сырые значения + rates с защитой от рестарта
+        rate_values: dict[str, float] = {}
         for rate_name, raw_name, candidates in COUNTERS:
             raw = None
             for name in candidates:
@@ -193,10 +196,18 @@ class VllmCollector:
                 if dt > 0:
                     delta = raw - prev_val
                     if delta >= 0:  # иначе — рестарт процесса, пропускаем
-                        samples.append(Sample(rate_name, now, delta / dt, "vllm", None, model))
+                        r = delta / dt
+                        samples.append(Sample(rate_name, now, r, "vllm", None, model))
+                        rate_values[rate_name] = r
                     else:
                         samples.append(Sample(f"{raw_name}_restart", now, 1.0, "vllm", None, model))
             self._prev[raw_name] = (now, raw)
+
+        # Prefix cache hit rate за интервал: hits_rate/queries_rate (0..1)
+        q = rate_values.get("prefix_cache_queries_rate")
+        h = rate_values.get("prefix_cache_hits_rate")
+        if q and h is not None:
+            samples.append(Sample("prefix_hit_rate", now, h / q, "vllm", None, model))
 
         # Finish reasons — сырые счётчики с суффиксом {reason}
         met = metrics.get(FINISH_REASON_METRIC)
