@@ -166,7 +166,9 @@ async def compute_cost(db, from_s: int, to_s: int) -> dict:
     while h < to_s:
         eff_from = max(from_s, h)
         eff_to = min(to_s, h + HOUR_S)
-        rate = rate_for_ts(versions, h) if versions else version
+        # Тариф на середину часа: смена версии в пределах часа — точное
+        # дробление часа по версиям не стоит (ошибка ≤ 1 ч по старому тарифу)
+        rate = rate_for_ts(versions, h + HOUR_S // 2) if versions else version
         day_of_hour = (h // DAY_S) * DAY_S
         dd = days.setdefault(
             day_of_hour,
@@ -243,7 +245,12 @@ async def compute_cost(db, from_s: int, to_s: int) -> dict:
                 samples = m_in_window.get(m)
                 if not samples:
                     continue
-                prev_rows = [p for p in raw_h.get(m, ()) if p[0] < eff_from]
+                # prev — последняя точка ≤ начала окна (граница часа уже
+                # учтена прошлым часом); если пусто — последняя точка
+                # предыдущего бакета, чтобы не терять граничный прирост
+                prev_rows = [p for p in raw_h.get(m, ()) if p[0] <= eff_from]
+                if not prev_rows:
+                    prev_rows = counter_by_hour.get(h - HOUR_S, {}).get(m, ())
                 prev = prev_rows[-1][1] if prev_rows else None
                 if m == "prompt_tokens_total":
                     p_delta = _positive_delta(prev, samples)
@@ -264,7 +271,9 @@ async def compute_cost(db, from_s: int, to_s: int) -> dict:
             hour_total += tok_cost
             hour_had_data = True
         elif h in tokens_by_hour:
-            p, c, req = tokens_by_hour[h]
+            # Частичный час — проратация полного часа по доле перекрытия
+            overlap = (eff_to - eff_from) / HOUR_S
+            p, c, req = (int(v * overlap) for v in tokens_by_hour[h])
             tok_cost = (
                 p * float(rate["token_prompt_per_million_usd"])
                 + c * float(rate["token_completion_per_million_usd"])
@@ -300,6 +309,9 @@ async def compute_cost(db, from_s: int, to_s: int) -> dict:
         dd = days[d]
         if dd["total"] <= 0 and dd["kwh"] <= 0:
             continue
+        # Завершённые дни — средняя по полным суткам (к платёжке); текущий
+        # (незавершённый) день — по покрытым секундам (единственная честная)
+        denom = DAY_S if d < (to_s // DAY_S) * DAY_S else dd["covered_s"]
         by_day.append(
             {
                 "day": d,
@@ -307,7 +319,7 @@ async def compute_cost(db, from_s: int, to_s: int) -> dict:
                 "tokens": round(dd["tokens"], 6),
                 "electricity": round(dd["electricity"], 6),
                 "kwh": round(dd["kwh"], 6),
-                "avg_power_w": (round(dd["energy_ws"] / dd["covered_s"], 1)
+                "avg_power_w": (round(dd["energy_ws"] / denom, 1)
                                 if dd["covered_s"] > 0 else None),
             }
         )
