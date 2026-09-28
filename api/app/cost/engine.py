@@ -8,7 +8,8 @@
 
 Источники (инвариант: пропуски — разрыв, не 0):
 * Электричество — часы с сырыми выборками ``gpu_power`` (metric_samples):
-  трапеции по соседним точкам + baseline (тариф часа) на покрытый интервал;
+  P_total(t) = Σ_gpu P_gpu(t) + P_base (ТЗ §6): трапеции по каждой gpu
+  отдельно + baseline на объединённое покрытие;
   более старые часы — ``avg`` из metric_hourly × длительность часа;
   часы без данных обеих таблиц не засчитываются.
 * Токены — часы с сырыми счётчиками vLLM (metric_samples): сумма
@@ -46,6 +47,19 @@ def _trapezoids(points: list[tuple[int, float]]) -> tuple[float, int]:
     return energy, max(0, covered)
 
 
+def _union_covered(spans: list[tuple[int, int]]) -> int:
+    """Покрытые секунды объединения интервалов [lo, hi] (непустого списка)."""
+    lo, hi = spans[0]
+    total = 0
+    for a, b in sorted(spans)[1:]:
+        if a > hi:
+            total += hi - lo
+            lo, hi = a, b
+        else:
+            hi = max(hi, b)
+    return total + (hi - lo)
+
+
 def _positive_delta(prev: float | None, samples: list[tuple[int, float]]) -> float:
     """Сумма положительных приростов счётчика: от prev (до окна) по точкам."""
     delta = 0.0
@@ -70,21 +84,26 @@ async def compute_cost(db, from_s: int, to_s: int) -> dict:
 
     # ------------------------------------------- батчевые выборки источников
     power_rows = await db.execute_fetchall(
-        """SELECT ts, value FROM metric_samples
-           WHERE metric = 'gpu_power' AND ts >= ? AND ts <= ? ORDER BY ts""",
+        """SELECT ts, value, gpu FROM metric_samples
+           WHERE metric = 'gpu_power' AND ts >= ? AND ts <= ?""",
         (from_s, to_s),
     )
-    power_by_hour: dict[int, list[tuple[int, float]]] = defaultdict(list)
+    power_by_hour: dict[int, dict[int, list[tuple[int, float]]]] = defaultdict(
+        lambda: defaultdict(list))
     for r in power_rows:
-        power_by_hour[(r["ts"] // HOUR_S) * HOUR_S].append((r["ts"], float(r["value"])))
+        g = -1 if r["gpu"] is None else r["gpu"]
+        power_by_hour[(r["ts"] // HOUR_S) * HOUR_S][g].append(
+            (r["ts"], float(r["value"]))
+        )
 
     hourly_rows = await db.execute_fetchall(
-        """SELECT hour, avg FROM metric_hourly
-           WHERE metric = 'gpu_power' AND hour >= ? AND hour <= ?""",
+        """SELECT hour, SUM(avg) AS total FROM metric_hourly
+           WHERE metric = 'gpu_power' AND hour >= ? AND hour <= ?
+           GROUP BY hour""",
         ((from_s // HOUR_S) * HOUR_S, to_s),
     )
     hourly_avg: dict[int, float] = {
-        r["hour"]: float(r["avg"]) for r in hourly_rows if r["avg"] is not None
+        r["hour"]: float(r["total"]) for r in hourly_rows if r["total"] is not None
     }
 
     fnames = await db.execute_fetchall(
@@ -143,12 +162,6 @@ async def compute_cost(db, from_s: int, to_s: int) -> dict:
     energy_ws = 0.0
     covered_s = 0
 
-    def _window(buckets: dict[int, list], hour: int) -> list:
-        """Точки [eff_from, eff_to]: свой бакет + граничные точки следующего."""
-        out = [p for p in buckets.get(hour, ()) if p[0] >= eff_from]
-        out += [p for p in buckets.get(hour + HOUR_S, ()) if p[0] <= eff_to]
-        return out
-
     h = (from_s // HOUR_S) * HOUR_S
     while h < to_s:
         eff_from = max(from_s, h)
@@ -163,11 +176,26 @@ async def compute_cost(db, from_s: int, to_s: int) -> dict:
         hour_had_data = False
 
         # ------------------------------------------------------ электричество
-        pts = _window(power_by_hour, h)
-        if pts:
-            gpu_ws, covered = _trapezoids(pts)
-            base_ws = float(rate["system_baseline_watts"]) * covered
-            energy = gpu_ws + base_ws
+        # P_total(t) = Σ_gpu P_gpu(t) + P_base (ТЗ §6): трапеции внутри
+        # каждой gpu (свой бакет + граничные точки следующего часа),
+        # baseline — на объединённое покрытие gpu-рядов
+        gpu_lists: list[list[tuple[int, float]]] = []
+        cur_g = power_by_hour.get(h, {})
+        nxt_g = power_by_hour.get(h + HOUR_S, {})
+        for g in set(cur_g) | set(nxt_g):
+            pts = [p for p in cur_g.get(g, ()) if p[0] >= eff_from]
+            pts += [p for p in nxt_g.get(g, ()) if p[0] <= eff_to]
+            if pts:
+                gpu_lists.append(pts)
+        if gpu_lists:
+            energy = 0.0
+            spans: list[tuple[int, int]] = []
+            for pts in gpu_lists:
+                w, _ = _trapezoids(pts)
+                energy += w
+                spans.append((pts[0][0], pts[-1][0]))
+            covered = _union_covered(spans)
+            energy += float(rate["system_baseline_watts"]) * covered
             if covered > 0:
                 kwh = energy / W_S_PER_KWH
                 elec = kwh * float(rate["rate_per_kwh_usd"])

@@ -67,6 +67,24 @@ def test_electricity_raw_1h(client, db_path):
     assert body["by_day"][0]["kwh"] == pytest.approx(0.5, **APPROX)
 
 
+def test_electricity_multigpu_sum(client, db_path):
+    """ТЗ §6: P_total = Σ_gpu P_gpu + baseline — 300W (gpu 0) + 200W (gpu 1)
+    + 200W baseline = 700W за 1ч → 0.7 kWh."""
+    seed_samples(
+        db_path,
+        [
+            ("gpu_power", T, 300.0, "gpu", 0, None),
+            ("gpu_power", T + 3600, 300.0, "gpu", 0, None),
+            ("gpu_power", T, 200.0, "gpu", 1, None),
+            ("gpu_power", T + 3600, 200.0, "gpu", 1, None),
+        ],
+    )
+    body = client.get("/api/cost", params={"from": T, "to": T + 3600}).json()
+    assert body["kwh"] == pytest.approx(0.7, **APPROX)
+    assert body["elec_cost"] == pytest.approx(0.7 * 0.10, **APPROX)
+    assert body["avg_power_w"] == pytest.approx(700.0, **APPROX)
+
+
 def test_electricity_gap_hours_not_zero(client, db_path):
     """Данные только за 1-й час из 2 → второй час не засчитывается (разрыв)."""
     seed_samples(
@@ -100,6 +118,25 @@ def test_electricity_hourly_fallback(client, db_path):
     assert body["tokens_cost"] == pytest.approx(0.5 + 1.5, **APPROX)
     assert body["requests"] == 10
     assert body["avg_power_w"] == pytest.approx(500.0, **APPROX)
+
+
+def test_electricity_hourly_fallback_multigpu(client, db_path):
+    """hourly-fallback с per-gpu строками: Σ avg по gpu (300+200) + 200W baseline = 700W."""
+    c = sqlite3.connect(str(db_path))
+    for gpu in (0, 1):
+        c.execute(
+            "INSERT INTO metric_hourly (metric, hour, gpu, avg, min, max, p95, count) "
+            "VALUES ('gpu_power', ?, ?, ?, ?, ?, ?, ?)",
+            (T, gpu, 300.0 if gpu == 0 else 200.0,
+             300.0 if gpu == 0 else 200.0,
+             300.0 if gpu == 0 else 200.0,
+             300.0 if gpu == 0 else 200.0, 12),
+        )
+    c.commit()
+    c.close()
+    body = client.get("/api/cost", params={"from": T, "to": T + 3600}).json()
+    assert body["kwh"] == pytest.approx(0.7, **APPROX)
+    assert body["avg_power_w"] == pytest.approx(700.0, **APPROX)
 
 
 # ----------------------------------------------------------------------- токены

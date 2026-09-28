@@ -108,6 +108,31 @@ def test_metrics_hourly(client, db_path):
     assert body["count"] == 24 * 7
 
 
+def test_metrics_hourly_multigpu(client, db_path):
+    # gpu-метрики: без gpu — среднее по строкам gpu; с gpu=N — только эта gpu
+    c = _conn(db_path)
+    base = (NOW - 3 * 86400) // 3600 * 3600
+    for i in range(24 * 3):
+        for gpu, w in ((0, 300.0), (1, 200.0)):
+            c.execute(
+                "INSERT INTO metric_hourly (metric, hour, gpu, avg, min, max, p95, count) "
+                "VALUES ('gpu_power', ?, ?, ?, ?, ?, ?, 12)",
+                (base + i * 3600, gpu, w, w, w, w),
+            )
+    c.commit()
+    c.close()
+    params = {"from": NOW - 3 * 86400, "to": NOW}
+    body = client.get("/api/metrics/gpu_power", params=params).json()
+    assert body["source"] == "hourly"
+    assert body["count"] == 24 * 3
+    assert all(p[1] == 250.0 for p in body["points"])  # (300+200)/2
+    body = client.get(
+        "/api/metrics/gpu_power", params={**params, "gpu": 1}
+    ).json()
+    assert body["count"] == 24 * 3
+    assert all(p[1] == 200.0 for p in body["points"])
+
+
 def test_metrics_daily(client, db_path):
     c = _conn(db_path)
     for i in range(30):
