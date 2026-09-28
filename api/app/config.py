@@ -112,7 +112,20 @@ class AppConfig(BaseModel):
 
 
 def _env(name: str, default: str = "") -> str:
-    return os.environ.get(name, default).strip()
+    """Значение env-переменной (strip + inline-комментарий; пусто → default).
+
+    Docker compose ``env_file`` НЕ режет inline-комментарии
+    (``KEY=value # коммент`` → значение с ``# коммент``), а ведущие пробелы
+    значения убирает — поэтому: значение, начинающееся с ``#`` (или с пробелом
+    перед которым стоит ``#``) — мусор из .env, отбрасываем. Значения наших
+    переменных никогда не содержат ``#``.
+    """
+    val = os.environ.get(name, "").strip()
+    if val.startswith("#"):
+        return default
+    if " #" in val:
+        val = val.split(" #", 1)[0].strip()
+    return val or default
 
 
 def _env_float(name: str, default: float) -> float:
@@ -182,7 +195,7 @@ def load_config() -> AppConfig:
             "VLLM_URL не задана: укажите адрес vLLM-сервера, "
             "например VLLM_URL=http://vllm:8000"
         )
-    daily_days = _env("RETENTION_DAILY_DAYS")
+    daily_days = _env("RETENTION_DAILY_DAYS").strip()
 
     return AppConfig(
         sources=Sources(
@@ -216,7 +229,7 @@ def load_config() -> AppConfig:
             retention=Retention(
                 raw_hours=_env_int("RETENTION_RAW_HOURS", 168),
                 hourly_days=_env_int("RETENTION_HOURLY_DAYS", 180),
-                daily_days=int(daily_days) if daily_days else None,
+                daily_days=int(daily_days) if daily_days.strip() else None,
             ),
         ),
         cost=Cost(
