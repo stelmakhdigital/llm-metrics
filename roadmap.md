@@ -54,6 +54,17 @@
 - [ ] 5.10 Прогон на GPU-сервере: make vllm-start + make start; проверка UI/метрик/логов; pytest api ✓, next build ✓, compose yaml ✓
 - [x] 5.11 Разрешение на коммит
 
+## F6 — доработка живого дашборда (сессия 2026-09-28, диагностика прод 192.168.1.114)
+- [x] 6.1 Live SSE мёртв в браузере: Next.js gzip без flush на /api/live (+ /api/logs/live, счётчик алертов) → `compress: false` в web/next.config.ts
+- [x] 6.2 GPU-периоды «нет данных»: parsePoints ждёт {ts,value}, API отдаёт [ts,value] → web/src/components/tabs/gpu/gpu-period.tsx
+- [x] 6.3 GPU: gpu_sm_clock → gpu_clock_sm (имя метрики в БД)
+- [x] 6.4 Модель: E2E-график e2e_p95 → e2e_latency_p95 (имя в БД) + docs/api-contracts.md
+- [x] 6.5 prefix_hit_rate персистить в metric_samples (вкладчик vLLM + whitelist), график «Prefix cache hit rate» перестанет быть пустым
+- [x] 6.6 Дефолтный порог алерта ttft_high: 2 с → 120 с (api/app/alerts/rules.py) + обновить живую настройку на 114
+- [x] 6.7 Сборка web + pytest api
+- [x] 6.8 Деплой на 114 (push → pull → rebuild) и проверка живого UI (Live, GPU 5м/7д, E2E, алерт)
+- [x] 6.9 Разрешение на коммит
+
 ## Сквозные
 - [x] Компиляция и тестирование (pytest, build, прогон против 192.168.1.114)
 - [x] Разрешение на коммит
