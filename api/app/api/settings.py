@@ -9,7 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
-from ..cost.rates import add_version, get_settings_payload
+from ..cost.rates import add_version, get_settings_payload, get_versions
 
 router = APIRouter(prefix="/api/settings")
 
@@ -52,6 +52,15 @@ async def put_cost_settings(request: Request, body: CostRateUpdate):
     if not body.has_fields():
         raise HTTPException(400, "Не передано ни одно поле тарифа")
     db = request.app.state.db
+    # «Сохранить» без изменений — не создаём новую версию (сравнение с текущей)
+    versions = await get_versions(db)
+    last = versions[-1] if versions else None
+    provided = {f: v for f, v in body.model_dump().items() if v is not None}
+    if last is not None and all(
+        last[f] == v if f == "currency" else float(last[f]) == float(v)
+        for f, v in provided.items()
+    ):
+        return {"current": last, "history": list(reversed(versions))}
     new = await add_version(db, body.model_dump())
     payload = await get_settings_payload(db)
     return {"current": new, "history": payload["history"]}

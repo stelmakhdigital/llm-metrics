@@ -67,6 +67,37 @@ def test_electricity_raw_1h(client, db_path):
     assert body["by_day"][0]["kwh"] == pytest.approx(0.5, **APPROX)
 
 
+def test_electricity_daily_avg_completed_day(client, db_path):
+    """Завершённый день (то_s после него): avg_power_w — по полным суткам
+    (1ч 500 Вт данных → 500*3600/86400 ≈ 20.8 Вт, а не 500)."""
+    D = (T // 86_400) * 86_400
+    h0 = D - 86_400 + 3_600  # 1-й час «вчерашнего» дня
+    seed_samples(
+        db_path,
+        [("gpu_power", h0 + 300 * i, 300.0, "gpu", 0, None) for i in range(13)],
+    )
+    body = client.get("/api/cost", params={"from": h0, "to": D + 3_600}).json()
+    assert len(body["by_day"]) == 1
+    assert body["by_day"][0]["day"] == D - 86_400
+    assert body["by_day"][0]["avg_power_w"] == pytest.approx(
+        500 * 3600 / 86_400, rel=0.01
+    )
+
+
+def test_electricity_daily_avg_current_day(client, db_path):
+    """Текущий (незавершённый) день: avg_power_w — по покрытым секундам (500 Вт)."""
+    D = (T // 86_400) * 86_400
+    h0 = D + 3_600
+    seed_samples(
+        db_path,
+        [("gpu_power", h0 + 300 * i, 300.0, "gpu", 0, None) for i in range(13)],
+    )
+    body = client.get("/api/cost", params={"from": h0, "to": D + 7_200}).json()
+    assert len(body["by_day"]) == 1
+    assert body["by_day"][0]["day"] == D
+    assert body["by_day"][0]["avg_power_w"] == pytest.approx(500.0, **APPROX)
+
+
 def test_electricity_multigpu_sum(client, db_path):
     """ТЗ §6: P_total = Σ_gpu P_gpu + baseline — 300W (gpu 0) + 200W (gpu 1)
     + 200W baseline = 700W за 1ч → 0.7 kWh."""
@@ -186,6 +217,39 @@ def test_total_sum_of_hour_increments_not_day_running_total(client, db_path):
     assert body["cumulative"][-1][1] == pytest.approx(1.0, **APPROX)
 
 
+def test_tokens_counter_cross_hour_boundary(client, db_path):
+    """Граничные потери счётчиков: прирост «последняя точка прошлого часа →
+    первая точка текущего» не теряется (prev — из предыдущего бакета).
+    Точки (T-5, 100), (T+5, 200), (T+3605, 300) → сумма дельт = 200."""
+    seed_samples(
+        db_path,
+        [
+            ("prompt_tokens_total", T - 5, 100.0, "vllm", None, "m1"),
+            ("prompt_tokens_total", T + 5, 200.0, "vllm", None, "m1"),
+            ("prompt_tokens_total", T + 3_605, 300.0, "vllm", None, "m1"),
+        ],
+    )
+    body = client.get("/api/cost", params={"from": T - 3_600, "to": T + 7_200}).json()
+    assert body["prompt_tokens"] == 200
+    assert body["tokens_cost"] == pytest.approx(200 * 0.5 / 1_000_000, rel=1e-6)
+
+
+def test_tokens_hourly_partial_hour_prorated(client, db_path):
+    """Fallback в tokens при частичном окне: полный час проратируется по
+    доле перекрытия (окно [T+1800, T+3600] → 50% строки часа T)."""
+    c = sqlite3.connect(str(db_path))
+    c.execute(
+        "INSERT INTO tokens (ts, prompt_tokens, completion_tokens, requests_finished) "
+        "VALUES (?, 1000000, 0, 0)",
+        (T,),
+    )
+    c.commit()
+    c.close()
+    body = client.get("/api/cost", params={"from": T + 1_800, "to": T + 3_600}).json()
+    assert body["prompt_tokens"] == 500_000
+    assert body["tokens_cost"] == pytest.approx(500_000 * 0.5 / 1_000_000, rel=1e-6)
+
+
 def test_zero_completion_null_unit_costs(client, db_path):
     """completion = 0 → per_1k_out_tok = null; requests = 0 → per_request = null."""
     seed_samples(
@@ -208,9 +272,10 @@ def test_zero_completion_null_unit_costs(client, db_path):
 
 
 def test_rate_versioning_mid_period(client, db_path):
-    """Ставка prompt меняется посередине периода → разные суммы за каждый час."""
+    """Ставка prompt меняется посередине периода → разные суммы за каждый час
+    (тариф считается на середину часа: смена на T+1801 попадает во 2-й час)."""
     _settings(db_path, [_rate(T, token_prompt_per_million_usd=0.5),
-                        _rate(T + 1800, token_prompt_per_million_usd=1.0)])
+                        _rate(T + 1801, token_prompt_per_million_usd=1.0)])
     seed_samples(
         db_path,
         [
@@ -223,10 +288,29 @@ def test_rate_versioning_mid_period(client, db_path):
         ],
     )
     body = client.get("/api/cost", params={"from": T, "to": T + 7200}).json()
-    # 1-й час — ставка 0.5 $/1M, 2-й (смена после T+1800) — 1.0 $/1M
+    # 1-й час — ставка 0.5 $/1M, 2-й (смена после середины часа T) — 1.0 $/1M
     assert body["tokens_cost"] == pytest.approx(0.5 + 1.0, **APPROX)
     assert body["prompt_tokens"] == 2_000_000
     assert body["per_1k_out_tok"] is None
+
+
+def test_rate_midpoint_applies_new_version(client, db_path):
+    """Смена тарифа ровно на T+1800 (середина часа T) → час T считается по
+    новому (midpoint) тарифу."""
+    _settings(db_path, [_rate(T, token_prompt_per_million_usd=0.5),
+                        _rate(T + 1800, token_prompt_per_million_usd=1.0)])
+    seed_samples(
+        db_path,
+        [
+            ("prompt_tokens_total", T, 0.0, "vllm", None, "m1"),
+            ("prompt_tokens_total", T + 3600, 1_000_000.0, "vllm", None, "m1"),
+            ("generation_tokens_total", T, 0.0, "vllm", None, "m1"),
+            ("generation_tokens_total", T + 3600, 0.0, "vllm", None, "m1"),
+        ],
+    )
+    body = client.get("/api/cost", params={"from": T, "to": T + 3600}).json()
+    assert body["tokens_cost"] == pytest.approx(1.0, **APPROX)
+    assert body["prompt_tokens"] == 1_000_000
 
 
 # ----------------------------------------------------------------- GET /api/cost
@@ -290,6 +374,27 @@ def test_settings_cost_put_adds_version(client):
 def test_settings_cost_put_validation(client):
     assert client.put("/api/settings/cost", json={}).status_code == 400
     assert client.put("/api/settings/cost", json={"rate_per_kwh_usd": -1}).status_code == 422
+
+
+def test_settings_cost_put_same_values_no_new_version(client):
+    """PUT с теми же значениями, что и текущая версия → новая версия не
+    создаётся (иначе в истории появляются двойники)."""
+    cur = client.get("/api/settings/cost").json()["current"]
+    r = client.put("/api/settings/cost", json={
+        "currency": cur["currency"],
+        "rate_per_kwh_usd": cur["rate_per_kwh_usd"],
+        "system_baseline_watts": cur["system_baseline_watts"],
+        "token_prompt_per_million_usd": cur["token_prompt_per_million_usd"],
+        "token_completion_per_million_usd": cur["token_completion_per_million_usd"],
+    })
+    assert r.status_code == 200
+    assert r.json()["current"]["updated_at"] == cur["updated_at"]
+    body = client.get("/api/settings/cost").json()
+    assert len(body["history"]) == 1
+    # частичный payload с теми же значениями — тоже без новой версии
+    r = client.put("/api/settings/cost", json={"rate_per_kwh_usd": 0.10})
+    assert r.json()["current"]["updated_at"] == cur["updated_at"]
+    assert len(client.get("/api/settings/cost").json()["history"]) == 1
 
 
 def test_new_rate_applies_from_next_hour(client, db_path):
