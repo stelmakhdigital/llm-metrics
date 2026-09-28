@@ -5,8 +5,8 @@ KPI за период по метрикам vLLM:
 * ``prompt_rate``/``gen_rate`` — средние tok/s за период;
 * квантили (``ttft_p50/p95``, ``tpot_p50/p95``, ``e2e_p95``):
   - период ≤24ч — по точкам сырых квантилей (``{base}_p50``/``{base}_p95``,
-    посчитанных при скрейпе интерполяцией по buckets) — квантиль (линейная
-    интерполяция) по объединённым точкам;
+    посчитанных при скрейпе интерполяцией по buckets) — k-квантиль (линейная
+    интерполяция) по точкам соответствующего квантиля (p50/p95 не смешиваются);
   - период >24ч — из ``metric_hourly``: p95-колонка (для p95), avg-колонка
     (для p50 и для средних rates);
 * ``prefix_hit_rate`` — Δhits_total/Δqueries_total за период;
@@ -227,12 +227,13 @@ async def build_model_response(
             pts = await _raw_points(db, (metric,), from_, to, model)
             kpi[key] = sum(pts) / len(pts) if pts else None
 
-        # --- квантили по точкам сырых квантилей (p50+p95 объединённо)
+        # --- квантили по точкам сырых квантилей (отдельные серии)
         for key, base in (("ttft", "ttft"), ("tpot", "tpot")):
-            pts = await _raw_points(db, (f"{base}_p50", f"{base}_p95"), from_, to, model)
-            kpi[f"{key}_p50"] = quantile_sorted(pts, 0.50)
-            kpi[f"{key}_p95"] = quantile_sorted(pts, 0.95)
-        e2e_pts = await _raw_points(db, ("e2e_latency_p50", "e2e_latency_p95"), from_, to, model)
+            p50_pts = await _raw_points(db, (f"{base}_p50",), from_, to, model)
+            p95_pts = await _raw_points(db, (f"{base}_p95",), from_, to, model)
+            kpi[f"{key}_p50"] = quantile_sorted(p50_pts, 0.50)
+            kpi[f"{key}_p95"] = quantile_sorted(p95_pts, 0.95)
+        e2e_pts = await _raw_points(db, ("e2e_latency_p95",), from_, to, model)
         kpi["e2e_p95"] = quantile_sorted(e2e_pts, 0.95)
     else:
         # --- период >24ч: hourly (avg-колонка для p50/rates, p95-колонка для p95)

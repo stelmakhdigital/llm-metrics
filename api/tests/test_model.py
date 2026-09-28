@@ -88,13 +88,13 @@ def test_model_two_models(client, db_path):
     assert kpi["kv_cache"] == 42.0
     assert kpi["prompt_rate"] == pytest.approx(15.0)
     assert kpi["gen_rate"] == pytest.approx(30.0)
-    # квантили по объединённым точкам (линейная интерполяция):
-    # ttft: [0.2, 0.4, 0.4, 0.8] → p50 = 0.4, p95 = 0.74
-    assert kpi["ttft_p50"] == pytest.approx(0.4)
-    assert kpi["ttft_p95"] == pytest.approx(0.74)
-    # tpot: [0.02, 0.05] → p50 = 0.035, p95 = 0.0485
-    assert kpi["tpot_p50"] == pytest.approx(0.035)
-    assert kpi["tpot_p95"] == pytest.approx(0.0485)
+    # квантили — по отдельным сериям (линейная интерполяция):
+    # ttft p50: [0.2, 0.4] → 0.3; ttft p95: [0.4, 0.8] → 0.78
+    assert kpi["ttft_p50"] == pytest.approx(0.3)
+    assert kpi["ttft_p95"] == pytest.approx(0.78)
+    # tpot p50: [0.02] → 0.02; tpot p95: [0.05] → 0.05
+    assert kpi["tpot_p50"] == pytest.approx(0.02)
+    assert kpi["tpot_p95"] == pytest.approx(0.05)
     # e2e: [1.5, 2.5] → p95 = 2.45
     assert kpi["e2e_p95"] == pytest.approx(2.45)
     # prefix hit rate: Δ(30-10) / Δ(200-100) = 0.2
