@@ -62,15 +62,21 @@ PROJECT_MEMORY.md              # этот файл
 - **Логи** (`collectors/logs/tailer.py`): tail файла (seek end, poll), index → SQLite `log_entries`, search API, retention. В dev-мок: `make mock-vllm` пишет лог-файл.
 - **Alerts** (`collectors/logs/alerts.py`): правила (regex → severity → cooldown), dedup key = `rule_id + line_hash`, Telegram webhook.
 
-## Деплой
+## Деплой (схема от 2026-07-20: vLLM на хосте, в docker — только api + web)
 
-- `docker-compose.yml`: `vllm` (build, gpus, volume модели, **порты наружу НЕ публикуется**, лог → shared volume `vllm-logs`), `api` (env-конфиг, volumes: data + vllm-logs, `mem_limit 2g`, `memswap_limit 2g`), `web` (build, port 3000). Логи — JSON (`docker logs`/`docker compose logs`).
-- vLLM-образ (`docker/vllm/Dockerfile`): base nvidia/cuda:12.8.0, build-старт от `nvidia/cuda:12.8.0-devel`, сборка 1CatAI/1Cat-vLLM (пин SHA, `VLLM_REF` build-arg) из исходников в образе; `entrypoint.sh` пишет лог в `/var/log/vllm/vllm.log` (rotation 50MB×4), `scripts/fp8.sh` — `--host 127.0.0.1`. `VLLM_MAX_JOBS` — параллелизация CUDA-компиляции.
-- `make install` — первичный деплой (создаёт .env из .env.example, плейсхолдер secrets/telegram_webhook.txt, toolkit, build, up). `make start` — повседневный старт (предупреждает, если нет secrets-файла). `make build-bg` — build в фоне (build.log).
-- `.env` — весь конфиг (VLLM_URL обязателен). Секреты в `secrets/telegram_webhook.txt`.
+- `docker-compose.yml`: `api` (env-конфиг, volumes: data + `${VLLM_LOG_DIR}:/var/log/vllm:ro`, `extra_hosts: host-gateway`, `mem_limit 2g`, NVML через nvidia-toolkit), `web` (build, port 3000). vllm-контейнер УБРАН.
+- **vLLM — хост-процесс**: внешний скрипт (на сервере `~/bin/work-fp8.sh`), обёртка `scripts/vllm-host.sh start|stop|status` (nohup, pid-файл, лог append → `$VLLM_LOG_DIR/vllm.log`). **Обязателен bind 0.0.0.0:8000** (127.0.0.1 из контейнеров не виден); порт 8000 — единственное открытое наружу (фаервол при необходимости).
+- api → vLLM: `VLLM_URL=http://host.docker.internal:8000`. Лог vLLM: host-файл, tailer понимает ротацию (inode/size); ротация — logrotate copytruncate 100M×4 (`deploy/logrotate-vllm.conf`, `make install-logrotate`).
+- `make install` — первичный деплой (.env + secrets + toolkit + build + up, в конце подсказывает vllm-start/install-logrotate). `make vllm-start|stop|status|logs` — vLLM на хосте. `make build-bg` — build api/web в фоне (build.log).
+- `.env` — весь конфиг (VLLM_URL обязателен; VLLM_SCRIPT, VLLM_LOG_DIR — пути хоста). Секреты в `secrets/telegram_webhook.txt`.
 - Документация: `docs/DEPLOY.md` (инструкция по деплою), `README.md` (dev + прод), `AGENTS.md` (правила работы).
 
 ## Ф5: прод-операционка (2026-07-20)
+
+### Смена схемы (2026-07-20, после OOM-сбоев сборки vLLM-обраба)
+- **vLLM вынесен из docker** (по решению пользователя): хост-процесс через обёртку `scripts/vllm-host.sh` над `~/bin/work-fp8.sh` (nohup+pid+stop/status, лог → `$VLLM_LOG_DIR/vllm.log`); `docker/vllm/` (in-image build) **удалён** (`9a3673b`). Причина: OOM-киллер при CUDA-компиляции даже на -j4 (RAM не хватает на несколько nvcc по ~8-10 ГБ).
+- api ходит в vLLM через `host.docker.internal:8000` (host-gateway); скрипт vLLM обязан слушать 0.0.0.0. Лог vLLM — host-файл, api читает bind-ro; logrotate copytruncate 100M×4 (`make install-logrotate`).
+- Изначальная версия (in-image build, пин SHA 14abfc27, MAX_JOBS) — в git-истории, актуальна только как референс: setup.py форка читает `MAX_JOBS` (не VLLM_MAX_JOBS).
 
 ### Решения (согласовано с пользователем)
 - **vLLM — автономный**: сборка 1CatAI/1Cat-vLLM из исходников **внутри образа** (не из conda-окр. хоста); base `nvidia/cuda:12.8.0-devel` (build) / `-cudnn9-runtime` (runtime); `git fetch --depth 1 origin <SHA>` по SHA (git clone --branch не принимает raw SHA); пин `14abfc27ee4e13cd2a9d1a8a882f36a629e5889a` (head main, 2026-07-14) — переопределяется `--build-arg VLLM_REF=...`.
@@ -90,7 +96,7 @@ PROJECT_MEMORY.md              # этот файл
 Фиксы: `65bc8e8` (fetch по SHA), `bbfa566` (COPY mock в api-образ), `73d0cce` (VLLM_MAX_JOBS, build-bg), `afeebde` (build-bg под /bin/sh, make install), `830dde6` (MAX_JOBS — setup.py форка читает MAX_JOBS, не VLLM_MAX_JOBS).
 
 ### Не закрыто
-- [ ] 5.10 собрать vLLM-образ на GPU-сервере и запустить весь стек (в процессе; 1-й пин — head main 14abfc27; сборка ~1-2 ч: pip-зависимости + CUDA-компиляция -j4). **Важно: setup.py форка читает `MAX_JOBS` (не VLLM_MAX_JOBS) — в Dockerfile задаются оба из ARG VLLM_MAX_JOBS. Если OOM (Killed/137) снова → `make build-bg VLLM_MAX_JOBS=2`.**
+- [ ] 5.10 прогон на GPU-сервере: `make vllm-start` + `make start`, проверка UI/метрик/логов (схема — vLLM на хосте).
 - [ ] 5.11 обновить roadmap/memory: F5 закрыт (после 5.10).
 
 ## Стек
@@ -102,15 +108,15 @@ PROJECT_MEMORY.md              # этот файл
 ## Состояние
 
 - **F0–F4 выполнены** (F4: стоимость + логи, 2026-09-26): 102 pytest (api), web build ✓ / eslint 0.
-- **F5 (2026-07-20)**: автономный vLLM-образ (in-image build, pinnable), env-конфиг, docker-гигиена, security, JSON-логи, healthchecks, secrets. Закрыто кодом/доками; осталось: сборка vLLM-образа + прогон на GPU-сервере (5.10).
-- Осталось: 5.10 (сборка vLLM-обраба + прогон на GPU-сервере), 5.11 (закрыть roadmap).
-- Ограничения: без docker локально (test через pytest + next build); vLLM-образ собирается только на GPU-сервере (нужны CUDA-headers).
-- vLLM-форк: 1CatAI/1Cat-vLLM (SM70-оптимизации, NVFP4, DFlash2, FP8-инфра). Сборка в образе (Dockerfile, пин SHA, `VLLM_REF` build-arg).
+- **F5 (2026-07-20)**: env-конфиг, docker-гигиена, security, JSON-логи, healthchecks, secrets; vLLM — на хосте (обёртка scripts/vllm-host.sh), в docker только api+web. Осталось: прогон на GPU-сервере (5.10).
+- Осталось: 5.10 (прогон на GPU-сервере), 5.11 (закрыть roadmap).
+- Ограничения: без docker локально (test через pytest + next build).
+- vLLM-форк: 1CatAI/1Cat-vLLM (SM70-оптимизации, NVFP4, DFlash2, FP8-инфра) — установлен в conda-окружении хоста; docker-сборка (docker/vllm) отменена после OOM.
 
 ## Следующие шаги (roadmap.md → Ф5)
 
-1. `make install` на GPU-сервере (первый раз: создаст .env/secrets, поставит toolkit, соберёт образы, поднимет). Для повторного: `make start`.
-2. `make build-bg` + `tail -f build.log` — сборка vLLM-образа (1-й раз ~1-2 ч: pip-зависимости + CUDA-компиляция -j4; при OOM → `VLLM_MAX_JOBS=2`).
-3. Заполнить `.env` (VLLM_URL, MODELS_DIR, MODEL) и `secrets/telegram_webhook.txt`.
-4. `make ps` / `make logs api` — проверить, что все healthy, api опрашивает vLLM.
+1. На GPU-сервере: `git pull` (схема vLLM-на-хосте, `9a3673b`); проверить что в `~/bin/work-fp8.sh` bind **0.0.0.0** (не 127.0.0.1).
+2. Заполнить `.env` (VLLM_URL=http://host.docker.internal:8000, VLLM_SCRIPT, VLLM_LOG_DIR) и `secrets/telegram_webhook.txt`.
+3. `make vllm-start` (хост-обёртка) + `make start` (api+web); `make install-logrotate` (разово).
+4. `make ps` / `make vllm-status` / `curl 127.0.0.1:3000/api/health` — все healthy, vLLM online, логи идут.
 5. Обновить roadmap.md / PROJECT_MEMORY.md: отметить Ф5 выполненным.

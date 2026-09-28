@@ -1,23 +1,23 @@
-# Деплой llm-metrics (docker compose)
+# Деплой llm-metrics (vLLM на хосте + api/web в docker)
 
-Прод-деплой: **vLLM (1Cat-vLLM, 4xV100 TP=4) + api + web** одним
-`docker compose up -d --build`. Наружу только `web :3000` (vLLM наружу
-НЕ публикуется — api ходит в него по имени в compose-сети);
-API (8100) — только в compose-сети (`/api/*` через Next.js-rewrite).
+Прод-деплой: **vLLM — процесс на хосте** (внешний скрипт `~/bin/work-fp8.sh`,
+обёртка `scripts/vllm-host.sh`), **api + web — docker compose**.
+Наружу только `web :3000`; api (8100) — только в compose-сети
+(`/api/*` через Next.js-rewrite). api ходит в vLLM на хосте по
+`http://host.docker.internal:8000` (extra_hosts: host-gateway).
 
 ## 1. Требования на сервере
 
-* Docker + Compose + **nvidia-container-toolkit** (GPU-библиотеки и
-  устройства инжектятся в контейнеры автоматически;
-  установка — раздел 2, ~2 мин);
+* Docker + Compose + **nvidia-container-toolkit** (NVML-коллектор api видит
+  все GPU хоста; установка — раздел 2, ~2 мин);
 * NVIDIA-драйвер (проверить: `ls /usr/lib/x86_64-linux-gnu/libcuda.so.1`);
-* каталог моделей + сама модель (~29 ГБ) — `MODELS_DIR` / `MODEL` в `.env`;
-* образ `llm-metrics-vllm:latest` — собирается из исходников (контекст сборки
-  маленький, сборка быстрая); пин версии vLLM:
-  `docker compose build --build-arg VLLM_REF=<git sha> vllm`.
-
-> vLLM-контейнер полностью самодостаточен: из хоста нужны только модель
-> (mount), GPU (toolkit) и общий лог-том `vllm-logs` (логи → api).
+* **vLLM, работающий на хосте** (своё окружение/скрипт, например
+  `~/bin/work-fp8.sh`), слушающий **`0.0.0.0:8000`**.
+  Важно: `127.0.0.1` из контейнеров НЕ виден — api ходит в хост через
+  IP docker-моста. Если порт 8000 не должен быть доступен из LAN —
+  закрыть фаерволом (например, разрешить только подсеть docker-моста).
+* Каталог логов на хосте (по умолчанию `/mnt/storage/vllm`) — лог vLLM
+  пишется в `vllm.log` там же, api читает read-only.
 
 ## 2. Установка
 
@@ -26,41 +26,50 @@ API (8100) — только в compose-сети (`/api/*` через Next.js-rew
 curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
   | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
 curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
-  sed 's#deb https://#deb [signed-by=/usr/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+  sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
   sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
 sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
 sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
-# проверка: sudo docker run --rm --gpus all ubuntu:24.04 nvidia-smi
+# проверка: docker run --rm --gpus all ubuntu:24.04 nvidia-smi
 
-# 2) остановить bare-vLLM (занимает GPU 0-3 и :8000)
-#    (процесс от ~/bin/work-fp8.sh; Ctrl-C в терминале или kill <pid>)
-
-# 3) репозиторий + окружение
+# 2) репозиторий + окружение
 git clone <repo-url> llm-metrics && cd llm-metrics
-cp .env.example .env && $EDITOR .env     # MODELS_DIR / MODEL
+cp .env.example .env && $EDITOR .env     # VLLM_URL / VLLM_SCRIPT / VLLM_LOG_DIR
 mkdir -p data
 # опционально: secrets/telegram_webhook.txt с URL Telegram-webhook
 # (не нужен — закомментировать секцию secrets в docker-compose.yml)
 
-# 4) образы (контексты сборки маленькие; vLLM — из исходников)
+# 3) образы api + web (сборка быстрая)
 make build
+
+# 4) vLLM на хосте: обёртка (nohup, лог → $VLLM_LOG_DIR/vllm.log)
+make vllm-start          # = scripts/vllm-host.sh start
+make install-logrotate   # ротация хост-лога: 100M×4, copytruncate
+
+# 5) api + web
+make start
 ```
 
-`.env` (в примере всё уже под compose по умолчанию):
+Порядок 4↔5 не критичен: пока vLLM недоступен, api показывает его как
+degraded и опрашивает дальше (retry), метрики появляются сами.
+
+`.env` (пример: `.env.example`):
 
 | Переменная | Значение |
 |---|---|
-| `VLLM_URL` | `http://vllm:8000` (vllm в этом же compose) |
-| `LOG_SOURCE_*` | `file`, `/var/log/vllm/vllm.log` (общий том `vllm-logs`) |
+| `VLLM_URL` | `http://host.docker.internal:8000` (vLLM на хосте) |
+| `VLLM_SCRIPT` | путь к хост-скрипту vLLM (`~/bin/work-fp8.sh`) |
+| `VLLM_LOG_DIR` | каталог логов на хосте (`/mnt/storage/vllm`) |
+| `LOG_SOURCE_*` | `file`, `/var/log/vllm/vllm.log` (bind-ro хост-каталога) |
 | `*PRICE_PER_M`, `RATE_PER_KWH_USD` | реальные тарифы |
 | `TELEGRAM_WEBHOOK` (или secrets-файл) | URL (раздел 6) или пусто |
 
 ## 3. Запуск
 
 ```bash
-make start               # up -d без пересборки (образы уже есть)
-make ps                  # vllm: healthy (старт ~10-20 мин: 29 ГБ модель + cudagraphs),
-                         # api: healthy, web: running
+make vllm-status         # vLLM на хосте (PID + хвост лога)
+make start               # api + web (up -d без пересборки)
+make ps                  # api: healthy, web: running
 # пересборка после смены кода: make rebuild (= down + build + up)
 ```
 
@@ -70,12 +79,13 @@ make ps                  # vllm: healthy (старт ~10-20 мин: 29 ГБ мо
 
 ```bash
 curl -s http://127.0.0.1:3000/api/health      # все источники online
+make vllm-logs                 # хвост лога vLLM (host)
 ```
 
 В браузере `http://<IP>:3000`:
 
-* 8 вкладок: Модель, GPU (5 GPU: 4xV100 под vLLM + RTX 2060), Система,
-  Стоимость, Логи (идут строки vLLM из общего тома `vllm-logs`), Алерты,
+* вкладки: Модель, GPU (все GPU хоста, включая не занятые vLLM), Система,
+  Стоимость, Логи (строки vLLM из хост-файла `vllm.log`), Алерты,
   Health, Настройки;
 * бейджи vLLM/GPU/SYS — зелёные.
 
@@ -83,28 +93,25 @@ curl -s http://127.0.0.1:3000/api/health      # все источники online
 
 В репо жёстко закодированных путей нет — всё через `.env`. На новом хосте:
 
-1. **Железо:** ≥4 GPU с достаточной VRAM (текущий профиль — 4xV100 32 ГБ
-   под `--tensor-parallel-size 4`), диск под модель и `./data`.
+1. **Железо:** GPU с достаточной VRAM под vLLM, диск под `./data` и лог.
 2. **Софт:** Docker + NVIDIA-драйвер + nvidia-container-toolkit
    (раздел 2, шаг 1) — 5 команд, разово.
-3. **vLLM-образ:** собрать на новом: `docker compose build vllm`
-   (контекст маленький, исходники из git), либо перенести docker save/load.
-4. **Модель:** ~29 ГБ — `rsync -av --partial` с текущего сервера
-   (или скачать заново); путь — `MODELS_DIR` + `MODEL` в `.env`.
-5. **Код:** `git clone`, `cp .env.example .env` + заполнить, `make start`
-   (образ vllm уже собран).
-6. **Проверка:** раздел 4.
+3. **vLLM на хосте:** своё окружение и скрипт запуска (work-fp8.sh или
+   аналог) — переносятся штатными средствами (conda-pack, git и т.п.);
+   обязателен bind `0.0.0.0:8000` и лог в файл (обёртка делает redirect).
+4. **Код:** `git clone`, `cp .env.example .env` + заполнить
+   (VLLM_URL/VLLM_SCRIPT/VLLM_LOG_DIR), `make build && make vllm-start
+   && make start`.
+5. **Проверка:** раздел 4.
 
-Что остаётся специфичным для «этого» сервера и переносится в `.env`:
-путь каталога моделей, имя модели, профиль запуска (`VLLM_SCRIPT`).
-Остальное (API, web, БД, конфиг) переносится как есть; `./data` —
-скопировать, если хочется сохранить историю.
+`./data` — скопировать, если хочется сохранить историю метрик.
 
 ## 5. Обновление vLLM
 
-Обновить или зафиксировать версию: `docker compose build --build-arg VLLM_REF=<git sha> vllm`
-(без аргумента — дефолтная ветка/реф). Затем `make start` (или `docker compose up -d`).
-Аргументы сервера — в `docker/vllm/scripts/fp8.sh`.
+Обновление vLLM — на хосте, в вашем окружении (git/pip + смена модели в
+скрипте). Для мониторинга достаточно: `make vllm-stop && make vllm-start`.
+`VLLM_MODEL_NAME` в `.env` (опционально) — метка модели для истории,
+по умолчанию берётся из `/v1/models`.
 
 ## 6. Telegram-алерты (разовая настройка)
 
@@ -126,12 +133,16 @@ curl -s http://127.0.0.1:3000/api/health      # все источники online
 # обновление кода
 git pull && make rebuild
 
+# vLLM на хосте
+make vllm-stop / vllm-start / vllm-status / vllm-logs
+
 # смена конфига (URL vLLM, источники логов, интервалы, ретенция)
 nano .env
 docker compose restart api
 
 # логи процесса
 docker compose logs -f api
+make vllm-logs                       # лог vLLM (host)
 
 # миграции схемы (обычно не нужны: авто-bootstrap + идемпотентная схема)
 docker compose exec api python -m alembic upgrade head
@@ -144,6 +155,7 @@ docker compose exec api python -m alembic upgrade head
 
 * `./data/metrics.db` (+ WAL-файлы) — все данные (метрики, токены, логи,
   настройки, алерты). Бэкап = копия файла (желательно при остановленном api).
+* `$VLLM_LOG_DIR/vllm.log` — лог vLLM на хосте (ротация logrotate, 100M×4).
 * `.env` — конфиг (URL, интервалы, ретенция, дефолт тарифов/алертов);
   `secrets/` — Telegram-webhook (не в git).
 * Ретенция: raw 168 ч, hourly 180 дн, daily безлимит, логи 14 дн
@@ -151,16 +163,17 @@ docker compose exec api python -m alembic upgrade head
 
 ## 9. Архитектура и изоляция
 
-* **vllm** — только инференс, не знает про мониторинг. Наружу НЕ публикуется:
-  api ходит в него по имени vllm в compose-сети.
-* **api** — весь мониторинг: метрики vLLM (`/metrics`), NVML (все 5 GPU,
-  включая RTX 2060 вне vLLM), лог-индексатор vLLM, БД, алерты. 8100 наружу
-  не публикуется.
+* **vLLM (host)** — только инференс, не знает про мониторинг. Слушает
+  `0.0.0.0:8000` (единственное, что нужно открыть наружу; при
+  необходимости — фаервол, чтобы порт был виден только из docker-моста).
+* **api** — весь мониторинг: метрики vLLM (`host.docker.internal:8000`),
+  NVML (все GPU хоста), лог-индексатор vLLM (bind-ro хост-каталога),
+  БД, алерты. 8100 наружу не публикуется.
 * **web** — только UI, `/api/*` rewrite на api, напрямую к vLLM не ходит.
 
-NVML читаем в api (а не в vLLM): один процесс видит все GPU хоста, включая
-RTX 2060, которой в vLLM (TP=4, GPU 0-3) нет; toolkit инжектит libnvidia-ml.
+NVML читаем в api: один процесс видит все GPU хоста (включая не занятые
+vLLM); toolkit инжектит libnvidia-ml и устройства.
 
-Логи vLLM собираются через общий том `vllm-logs` (vLLM пишет
-`/var/log/vllm/vllm.log`, api читает ro, лог-источник `file`) — docker-сокет
-не нужен.
+Логи vLLM: хост-обёртка пишет `vllm.log` (nohup redirect), logrotate
+(copytruncate) режет по 100M×4, api читает файл read-only (тейлер
+переносит ротацию: смена inode / уменьшение размера). Docker-сокет не нужен.

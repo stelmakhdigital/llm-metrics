@@ -5,10 +5,12 @@
 
 ## Запуск
 
-Prod (сервер с vLLM): `docker compose up -d --build` (наружу только web :3000;
-API и vLLM без публичных портов — `/api/*` проксирует Next.js, api ходит
-в vLLM по имени в compose-сети). Конфиг — `.env`: `cp .env.example .env`
-и отредактировать (URL vLLM, опрос/ретенция, тарифы, алерты).
+Prod (сервер с vLLM на хосте): vLLM запускается хост-скриптом (обёртка
+`make vllm-start` = nohup над `~/bin/work-fp8.sh`, лог → файл), api + web —
+`docker compose up -d --build` (наружу только web :3000; api ходит в vLLM
+по `http://host.docker.internal:8000`, скрипт vLLM должен слушать 0.0.0.0).
+Конфиг — `.env`: `cp .env.example .env` и отредактировать (URL vLLM,
+пути хоста, опрос/ретенция, тарифы, алерты).
 Подробная инструкция (установка, Telegram-алерты, эксплуатация) —
 [`docs/DEPLOY.md`](docs/DEPLOY.md).
 При обновлении схемы БД: `cd api && alembic upgrade head` (миграции в
@@ -63,8 +65,8 @@ KPI и графики вкладки «Модель» (сырые данные, 
 
 ### Файл логов (тип `file`, по умолчанию)
 
-В compose логи vLLM лежат в общем томе `vllm-logs`: vLLM пишет
-`/var/log/vllm/vllm.log`, api монтирует тот же том (ro):
+В prod лог vLLM — хост-файл, который пишет обёртка (`scripts/vllm-host.sh`,
+`$VLLM_LOG_DIR/vllm.log`); api монтирует каталог read-only (`/var/log/vllm`):
 
 ```
 LOG_SOURCE_NAME=vllm            # имя источника (видно в UI и в /api/health)
