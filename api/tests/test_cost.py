@@ -165,6 +165,27 @@ def test_tokens_raw_1m(client, db_path):
     assert body["per_1k_out_tok"] == pytest.approx(2.0 * 1000 / 1_000_000, **APPROX)
 
 
+def test_total_sum_of_hour_increments_not_day_running_total(client, db_path):
+    """Регрессия (F7): total — сумма почасовых приростов, а не сумма
+    нарастающих итогов дня (на день с >1ч данных «стоимость за период»
+    была завышена в разы: cum += dd_total каждый час)."""
+    seed_samples(
+        db_path,
+        [
+            ("prompt_tokens_total", T, 0.0, "vllm", None, "m1"),
+            ("prompt_tokens_total", T + 3600, 1_000_000.0, "vllm", None, "m1"),
+            ("prompt_tokens_total", T + 7200, 2_000_000.0, "vllm", None, "m1"),
+        ],
+    )
+    body = client.get("/api/cost", params={"from": T, "to": T + 7200}).json()
+    assert body["tokens_cost"] == pytest.approx(1.0, **APPROX)
+    assert body["total"] == pytest.approx(1.0, **APPROX)
+    assert body["total"] == pytest.approx(
+        sum(d["total"] for d in body["by_day"]), rel=1e-6
+    )
+    assert body["cumulative"][-1][1] == pytest.approx(1.0, **APPROX)
+
+
 def test_zero_completion_null_unit_costs(client, db_path):
     """completion = 0 → per_1k_out_tok = null; requests = 0 → per_request = null."""
     seed_samples(

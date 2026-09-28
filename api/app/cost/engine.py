@@ -174,6 +174,9 @@ async def compute_cost(db, from_s: int, to_s: int) -> dict:
              "electricity": 0.0, "kwh": 0.0, "energy_ws": 0.0, "covered_s": 0},
         )
         hour_had_data = False
+        # прирост стоимости ЭТОГО часа (dd[*] — накопители за день; складывать
+        # их в cum каждый час нельзя — получится нарастающий итог дня)
+        hour_total = 0.0
 
         # ------------------------------------------------------ электричество
         # P_total(t) = Σ_gpu P_gpu(t) + P_base (ТЗ §6): трапеции внутри
@@ -202,6 +205,7 @@ async def compute_cost(db, from_s: int, to_s: int) -> dict:
                 cur["elec_cost"] += elec
                 cur["kwh"] += kwh
                 dd["electricity"] += elec
+                hour_total += elec
                 dd["kwh"] += kwh
                 dd["energy_ws"] += energy
                 dd["covered_s"] += covered
@@ -216,6 +220,7 @@ async def compute_cost(db, from_s: int, to_s: int) -> dict:
             cur["elec_cost"] += elec
             cur["kwh"] += kwh
             dd["electricity"] += elec
+            hour_total += elec
             dd["kwh"] += kwh
             dd["energy_ws"] += energy
             dd["covered_s"] += span
@@ -256,6 +261,7 @@ async def compute_cost(db, from_s: int, to_s: int) -> dict:
             cur["completion_tokens"] += int(c_delta)
             cur["requests"] += int(req_delta)
             dd["tokens"] += tok_cost
+            hour_total += tok_cost
             hour_had_data = True
         elif h in tokens_by_hour:
             p, c, req = tokens_by_hour[h]
@@ -268,12 +274,13 @@ async def compute_cost(db, from_s: int, to_s: int) -> dict:
             cur["completion_tokens"] += c
             cur["requests"] += req
             dd["tokens"] += tok_cost
+            hour_total += tok_cost
             hour_had_data = True
 
         if hour_had_data:
             dd["total"] = dd["tokens"] + dd["electricity"]
-            cum += dd["total"]
-            cur["total"] += dd["total"]
+            cum += hour_total
+            cur["total"] += hour_total
             cur["cumulative"].append([eff_to, round(cum, 6)])
         h += HOUR_S
 
