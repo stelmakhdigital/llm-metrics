@@ -39,6 +39,10 @@ def run_migrations_online() -> None:
         )
         with context.begin_transaction():
             context.run_migrations()
+        # внешний connection-объект: без явного commit alembic откатит
+        # обновление alembic_version (DDL/DML миграций у SQLite могли
+        # закоммититься неявно — схема «приживалась», а версия нет)
+        connection.commit()
 
 
 if context.is_offline_mode():
