@@ -24,7 +24,7 @@ const METRICS = [
   { id: "gpu_util", label: "утилизация %" },
   { id: "gpu_mem_used_mib", label: "VRAM MiB" },
   { id: "gpu_temp", label: "температура °C" },
-  { id: "gpu_sm_clock", label: "SM clock MHz" },
+  { id: "gpu_clock_sm", label: "SM clock MHz" },
 ] as const;
 
 type MetricId = (typeof METRICS)[number]["id"];
@@ -53,11 +53,11 @@ function parsePoints(json: unknown): MetricPoint[] {
       (json as { points?: unknown; series?: unknown })?.series ??
       []);
   if (!Array.isArray(arr)) return [];
-  return (arr as { ts?: number; value?: number | null }[])
-    .filter((p) => typeof p?.ts === "number")
-    .map((p) => ({
-      ts: p.ts as number,
-      value: typeof p.value === "number" ? p.value : null,
+  return (arr as [number, number | null][])
+    .filter((p) => Array.isArray(p) && typeof p[0] === "number")
+    .map(([ts, value]) => ({
+      ts,
+      value: typeof value === "number" ? value : null,
     }));
 }
 

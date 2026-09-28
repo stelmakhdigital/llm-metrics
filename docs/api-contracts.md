@@ -48,7 +48,7 @@
 - `models` — сегментация по метке `model` в metric_samples (для графика — вертикальные линии).
 - Счётчики за период — дифф (первые/последние значения), finish reasons — по `request_success_total_{reason}`.
 - Квантили: p50/p95 — по точкам сырых квантилей за период (точки уже посчитаны при скрейпе интерполяцией по buckets); e2e — p95 из тех же точек. Период >24ч — из hourly (p95-колонка).
-- Графики вкладки «Модель» идут через существующий `/api/metrics/{metric}` (метрики: num_requests_running, num_requests_waiting, prompt_tokens_rate, generation_tokens_rate, ttft_p50, ttft_p95, itl_p50, itl_p95, tpot_p50, tpot_p95, e2e_p95, kv_cache_usage, prefix_hit_rate, preemptions_rate).
+- Графики вкладки «Модель» идут через существующий `/api/metrics/{metric}` (метрики: num_requests_running, num_requests_waiting, prompt_tokens_rate, generation_tokens_rate, ttft_p50, ttft_p95, itl_p50, itl_p95, tpot_p50, tpot_p95, e2e_latency_p95, kv_cache_usage, prefix_hit_rate, preemptions_rate).
 - Для distributions: коллектор vLLM дополнительно хранит кумулятивные счётчики `request_prompt_tokens_bucket_{le}` / `request_generation_tokens_bucket_{le}` (le — из лейблов, без `+Inf`).
 
 ## GET /api/model/models (F4.4)

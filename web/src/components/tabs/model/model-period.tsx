@@ -31,7 +31,7 @@ const ITL_TPOT_SPECS: MetricSpec[] = [
   { metric: "tpot_p95", label: "TPOT p95", color: PALETTE[6] },
 ];
 
-const E2E_SPECS: MetricSpec[] = [{ metric: "e2e_p95", label: "p95", color: PALETTE[0] }];
+const E2E_SPECS: MetricSpec[] = [{ metric: "e2e_latency_p95", label: "p95", color: PALETTE[0] }];
 
 const THROUGHPUT_SPECS: MetricSpec[] = [
   { metric: "prompt_tokens_rate", label: "prompt tok/s", color: PALETTE[1] },
