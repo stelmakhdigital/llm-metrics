@@ -113,6 +113,17 @@ PROJECT_MEMORY.md              # этот файл
 - Ограничения: без docker локально (test через pytest + next build).
 - vLLM-форк: 1CatAI/1Cat-vLLM (SM70-оптимизации, NVFP4, DFlash2, FP8-инфра) — установлен в conda-окружении хоста; docker-сборка (docker/vllm) отменена после OOM.
 
+## F8 (2026-09-28): аудит «Стоимости» и «Модели»
+- Cost: cum += day_total каждый час → «сегодня» $153 при $37 (фикс: почасовые приросты); prev счётчика только в своём бакете → потеря ~10с/час (фикс: prev из прошлого бакета, точка ts==граница — прошлого часа); partial-час из tokens — проратация; «к платёжке» — по суткам для завершённых дней; тариф mid-hour; no-op PUT тарифов не создаёт версию. Live: 30д-запрос 1/5 мин; пустые дни — разрывы; stacked; подписи: «1k completion (вся стоимость)», «сегодня — с 00:00 UTC», мощность; форма тарифов: пустое поле = невалидно.
+- Ось X: русские метки (UPlotChart fmtAxisTime: ≤36ч HH:MM, ≤14д ДД.ММ ЧЧ:ММ, больше ДД.ММ).
+- Live prefix_hit_rate — rolling 60с (collector _pfx_hist), fallback 5с/null.
+- «Модель»: prompt tok/s ВКЛЮЧАЕТ cached prefix (prompt_tokens_total = local_cache_hit + local_compute) — пики 40k+ при «Avg prompt throughput» в логах ≈0: это семантика vLLM, не баг (ТЗ §5.2 фиксирует rate(prompt_tokens_total)). Если нужна «вычислительная» скорость — rate(prompt_tokens_by_source_total{source="local_compute"}). TTFT/TPOT/ITL/E2E — по кумулятивным histogram'ам vLLM (сброс при рестарте).
+
+## F7 (2026-09-28): аудит и фиксы расчётов/графиков
+- Находи и фиксы (prod 114): downsample (24ч было 7-20 точек → buckets=max_points//2); KPI p50/p95 — по отдельным сериям (ttft_p50 был завышен 2.4x); cost-engine Σ_gpu P + baseline (кВт·ч были занижены ~×3, avg_power_w 279→~860 Вт); gpu-колонка в metric_hourly/daily (миграция 0003 + бэкфилл, per-GPU 7д/30д); фронт cacheKey GpuPeriod + from/to. Бонус: баг alembic env.py — без commit после run_migrations версия-штамп откатывалась (DDL/DML приживались, alembic_version застревал).
+- Деплой: на 114 `docker exec -e METRICS_DB_URL=sqlite:////data/metrics.db llm-metrics-api alembic upgrade head` (alembic.ini url относительный, env обязателен).
+- Косметика, сознательно НЕ чинили: время на осях/карах — часовой пояс браузера (не сервера, ТЗ §5.1); подпись «KV cache (средняя)» = последнее значение; uPlot пересоздаётся на каждый SSE-пакет (не append).
+
 ## F6 (2026-09-28): доработка живого дашборда
 - Диагностика прод (192.168.1.114): Live SSE ломался gzip-компрессией Next (fix: `compress: false`); GPU-периоды — parsePoints ждал {ts,value} вместо кортежей; имена метрик: `gpu_clock_sm` (не gpu_sm_clock), `e2e_latency_p95` (не e2e_p95); prefix_hit_rate не персистился; порог ttft_high 2с→120с. Детали — roadmap.md F6.
 - Деплой: прод-репо /home/arkalaust/Code/llm-metrics на 192.168.1.114 (git pull + docker compose build), доступ `ssh -p 2214 arkalaust@192.168.1.114`.
