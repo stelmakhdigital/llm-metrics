@@ -5,8 +5,14 @@ PY       := $(VENV)/bin/python
 COMPOSE  ?= $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo docker-compose)
 MOCK_F   := -f docker-compose.yml -f docker-compose.mock.yml
 
+# Пути обёртки vLLM на хосте — из .env (пример: .env.example)
+VLLM_SCRIPT  ?= $(HOME)/bin/work-fp8.sh
+VLLM_LOG_DIR ?= /mnt/storage/vllm
+-include .env
+
 .PHONY: setup dev-api dev-web mock-vllm test-api alembic
 .PHONY: start down rebuild logs ps mock-start mock-down build build-bg install install-toolkit gpu-check all
+.PHONY: vllm-start vllm-stop vllm-status vllm-logs install-logrotate
 
 # venv + зависимости API
 setup:
@@ -61,12 +67,7 @@ gpu-check:
 # Для повседневного старта достаточно: make start
 all: install-toolkit up
 
-# Параллелизация CUDA-компиляции vLLM (нужна RAM ~2-4 ГБ на nvcc-процесс).
-# Если сборка упала OOM ("Killed"/exit 137 в build.log) — уменьшить:
-#   VLLM_MAX_JOBS=2 make build-bg
-# (compose подставит значения из env; пин vLLM: VLLM_REF=<sha> make build)
-
-# Пересобрать все образы (контексты сборки маленькие — сборка быстрая).
+# Пересобрать все образы (api + web; сборка быстрая).
 build:
 	$(COMPOSE) build
 
@@ -79,10 +80,11 @@ build-bg:
 # Полный первичный деплой на новом сервере: .env + secrets + toolkit + образы + запуск.
 # Идемпотентно; после создания .env/secrets их заполнить под себя.
 install:
-	@test -f .env || { cp .env.example .env; echo "создан .env — заполнить MODELS_DIR/MODEL/VLLM_URL под свой сервер"; }
+	@test -f .env || { cp .env.example .env; echo "создан .env — заполнить VLLM_URL/VLLM_SCRIPT/VLLM_LOG_DIR под свой сервер"; }
 	@test -f secrets/telegram_webhook.txt || { mkdir -p secrets; printf 'https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<CHAT>' > secrets/telegram_webhook.txt; echo "создан плейсхолдер secrets/telegram_webhook.txt — заменить на реальный webhook (или закомментировать секцию secrets: в docker-compose.yml)"; }
 	@$(MAKE) install-toolkit
 	@$(MAKE) up
+	@echo "дальше: make vllm-start (vLLM на хосте) и make install-logrotate"
 
 # Поднять стек (без пересборки; образы — make build)
 start:
@@ -99,9 +101,28 @@ down:
 # Полный рестарт с пересборкой
 rebuild: down up
 
-# Логи (usage: make logs S=api|web|vllm)
+# Логи (usage: make logs S=api|web)
 logs:
 	$(COMPOSE) logs -f $(S)
+
+# ---- vLLM на хосте (обёртка scripts/vllm-host.sh над work-fp8.sh) ----
+# Поднять vLLM (nohup, лог → $(VLLM_LOG_DIR)/vllm.log; уже запущен — не тронет)
+vllm-start:
+	VLLM_SCRIPT=$(VLLM_SCRIPT) VLLM_LOG_DIR=$(VLLM_LOG_DIR) ./scripts/vllm-host.sh start
+
+vllm-stop:
+	VLLM_SCRIPT=$(VLLM_SCRIPT) VLLM_LOG_DIR=$(VLLM_LOG_DIR) ./scripts/vllm-host.sh stop
+
+vllm-status:
+	VLLM_SCRIPT=$(VLLM_SCRIPT) VLLM_LOG_DIR=$(VLLM_LOG_DIR) ./scripts/vllm-host.sh status
+
+# Хвост лога vLLM
+vllm-logs:
+	tail -n 100 $(VLLM_LOG_DIR)/vllm.log
+
+# logrotate хост-лога vLLM (100M×4, copytruncate; путь подставится из .env)
+install-logrotate:
+	@sed "s|/mnt/storage/vllm|$(VLLM_LOG_DIR)|" deploy/logrotate-vllm.conf | sudo tee /etc/logrotate.d/vllm >/dev/null && echo "установлен /etc/logrotate.d/vllm (лог: $(VLLM_LOG_DIR)/vllm.log)"
 
 # Статус контейнеров
 ps:
