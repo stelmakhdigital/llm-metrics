@@ -88,12 +88,21 @@ export function RatesForm() {
 
   const set = (k: Field, v: string) => setValues((s) => ({ ...s, [k]: v }));
 
+  // Пустое/некорректное поле — форма невалидна (Number("") = 0 не уходит тихо).
+  const parsed = FIELDS.map((f) => {
+    const raw = values[f.key].trim();
+    if (raw === "") return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  });
+  const valid = parsed.every((n) => n !== null);
+
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
+    if (!valid) return;
     const upd: CostRateUpdate = { currency: values.currency.trim().toUpperCase() };
-    for (const f of FIELDS) {
-      const n = Number(values[f.key]);
-      if (Number.isFinite(n)) upd[f.key] = n;
+    for (let i = 0; i < FIELDS.length; i++) {
+      if (parsed[i] !== null) upd[FIELDS[i].key] = parsed[i];
     }
     void save(upd);
   };
@@ -126,7 +135,7 @@ export function RatesForm() {
           />
         </label>
         <div className="flex items-end">
-          <Button type="submit" disabled={saving}>
+          <Button type="submit" disabled={saving || !valid}>
             {saving ? "Сохранение…" : "Сохранить"}
           </Button>
         </div>

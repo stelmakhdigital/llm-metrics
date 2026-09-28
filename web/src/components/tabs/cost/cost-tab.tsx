@@ -23,12 +23,12 @@ import { RatesForm } from "./rates-form";
 
 const DAY_S = 86_400;
 
-/** Точки [ts, v] из суточных значений (null — пропуск). */
+/** Точки [ts, v] из суточных значений: null/0 — разрыв (пропуски не рисуются как 0). */
 function dayPoints(
   days: CostDayPoint[],
   key: "tokens" | "electricity" | "total" | "kwh" | "avg_power_w",
 ): [number, number | null][] {
-  return days.map((d) => [d.day, d[key]]);
+  return days.map((d) => [d.day, d[key] === 0 ? null : d[key]]);
 }
 
 /** Мини-график в KPI-карточке: тренд по дням. */
@@ -55,7 +55,10 @@ export function CostTab() {
   const { data, loading, error } = usePoll<CostData>(url, isLive ? 30_000 : 0);
 
   // 30-дневное окно: KPI «за 30 дней» + тренд/графики по дням.
-  const month = usePoll<CostData>(costUrl(now - 30 * DAY_S, now), 5 * 60_000);
+  // now округлён вниз до 5-минутной границы: URL меняется 1 раз в 5 мин,
+  // а не на каждом 30-с тике (тяжёлый запрос не переспрашивается зря).
+  const monthNow = Math.floor(now / 300) * 300;
+  const month = usePoll<CostData>(costUrl(monthNow - 30 * DAY_S, monthNow), 5 * 60_000);
   const m = month.data;
 
   const cur = data?.currency ?? m?.currency ?? "USD";
@@ -94,6 +97,7 @@ export function CostTab() {
                 <>
                   токены {fmtMoney(data.tokens_cost, cur)} · электричество{" "}
                   {fmtMoney(data.elec_cost, cur)}
+                  {isLive && <span> · день — с 00:00 UTC</span>}
                 </>
               }
             >
@@ -123,12 +127,13 @@ export function CostTab() {
             </KpiCard>
 
             <KpiCard
-              label="За 1k output-токенов"
+              label="За 1k completion-токенов (вся стоимость)"
               value={fmtMoney(data.per_1k_out_tok, cur)}
               sub={
-                data.completion_tokens > 0
-                  ? `completion: ${fmtMillions(data.completion_tokens)}`
-                  : "нет completion-токенов"
+                <>
+                  prompt+completion+эл. · completion: {" "}
+                  {data.completion_tokens > 0 ? fmtMillions(data.completion_tokens) : "—"}
+                </>
               }
             />
 
@@ -174,6 +179,7 @@ export function CostTab() {
                 <NoData />
               ) : (
                 <UPlotChart
+                  stack
                   series={[
                     { name: "токены", color: PALETTE[1], points: dayPoints(m!.by_day, "tokens") },
                     {
@@ -186,7 +192,10 @@ export function CostTab() {
               )}
             </ChartCard>
 
-            <ChartCard title="Средняя мощность по дням, 30 дней (к платёжке)">
+            <ChartCard
+              title="Средняя мощность по дням, 30 дней (к платёжке)"
+              note="завершённые дни — по суткам, текущий — по времени под нагрузкой"
+            >
               {(m?.power_by_day.length ?? 0) === 0 ? (
                 <NoData />
               ) : (
