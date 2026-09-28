@@ -71,11 +71,11 @@ DEFAULT_RULES: list[Rule] = [
     ),
     Rule(
         "ttft_high",
-        "TTFT p95 > 2 с",
+        "TTFT p95 > 120 с",
         "warning",
         metric="ttft_p95",
         op=">",
-        value=2.0,
+        value=120.0,
         for_s=300,
         cooldown_s=3600,
     ),
