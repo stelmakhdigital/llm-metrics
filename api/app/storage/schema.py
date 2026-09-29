@@ -57,6 +57,22 @@ SCHEMA_STATEMENTS: list[str] = [
     """,
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_ts ON tokens(ts)",
     """
+    CREATE TABLE IF NOT EXISTS model_tokens (
+        ts INTEGER              NOT NULL,  -- epoch начала часа (UTC)
+        model TEXT              NOT NULL,
+        prompt_tokens INTEGER,
+        completion_tokens INTEGER,
+        requests_finished INTEGER,
+        finish_reasons TEXT,     -- JSON {reason: n}
+        preemptions INTEGER,
+        prefix_hits INTEGER,
+        prefix_queries INTEGER,
+        prompt_dist TEXT,        -- JSON {le: delta}
+        generation_dist TEXT,    -- JSON {le: delta}
+        PRIMARY KEY (ts, model)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS log_entries (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ts INTEGER   NOT NULL,  -- epoch-МИЛЛИСекунды UTC (точная до мс, ТЗ §5.6)

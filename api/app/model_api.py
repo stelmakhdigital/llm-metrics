@@ -20,6 +20,7 @@ KPI за период по метрикам vLLM:
 
 from __future__ import annotations
 
+import json
 import math
 from typing import Any
 
@@ -179,8 +180,10 @@ async def build_model_response(
     ``model`` (F4.4): фильтр по метке модели. Период ≤24ч — сырые данные;
     >24ч — rates/квантили из ``metric_hourly`` (с 0004 агрегаты несут
     model). Счётчики (finish reasons, distributions, prefix, preemptions)
-    и «последние значения» (running/waiting/kv) — только сырые: при
-    filterе и периоде, выходящем за raw-ретенцию (168ч), могут быть null.
+    при фильтре и периоде >24ч — из ``model_tokens`` (0005, дельты по
+    модели за закрытые часы; глубина = ретенция агрегата). «Последние
+    значения» (running/waiting/kv) — только сырые: при фильтре и периоде,
+    выходящем за raw-ретенцию (168ч), — null.
     """
     resp = _empty_response()
     if from_ < 0 or to <= from_:
@@ -252,47 +255,123 @@ async def build_model_response(
         kpi["e2e_p95"] = await _hourly_stats(db, "e2e_latency_p95", from_, to, "p95", model)
 
     # --- счётчики за период (дифф)
-    counters = await _first_last(db, "%", from_, to, model)
+    # model-фильтр и период глубже raw-ретенции — из агрегата model_tokens
+    # (issue #5); иначе — дельты сырых счётчиков
+    counters = {}
+    if model is not None and span > RAW_SPAN_S:
+        counters = await _model_tokens_summary(db, from_, to, model)
+    else:
+        counters = await _first_last(db, "%", from_, to, model)
     # finish reasons
     reasons: dict[str, int] = {}
     finished = 0
     has_reasons = False
-    for m, (first_v, last_v) in counters.items():
-        if not m.startswith("request_success_total_"):
-            continue
-        d = last_v - first_v
-        if d < 0:
-            continue
-        reason = m[len("request_success_total_") :]
-        reasons[reason] = int(reasons.get(reason, 0) + d)
-        finished += d
-        has_reasons = True
+    if "_summary" in counters:
+        reasons = dict(counters.get("_finish_reasons") or {})
+        finished = int(sum(reasons.values()))
+        has_reasons = bool(reasons)
+    else:
+        for m, (first_v, last_v) in counters.items():
+            if not m.startswith("request_success_total_"):
+                continue
+            d = last_v - first_v
+            if d < 0:
+                continue
+            reason = m[len("request_success_total_") :]
+            reasons[reason] = int(reasons.get(reason, 0) + d)
+            finished += d
+            has_reasons = True
     if has_reasons:
         kpi["finish_reasons"] = dict(sorted(reasons.items()))
         kpi["requests_finished"] = int(finished)
 
     # preemptions
-    prem = _counter_delta(counters, "num_preemptions_total")
+    prem = counters.get("_preemptions") if "_summary" in counters else _counter_delta(counters, "num_preemptions_total")
     if prem is not None:
         kpi["preemptions"] = int(prem)
 
     # prefix hit rate — Δhits/Δqueries
-    hits = _counter_delta(counters, "prefix_cache_hits_total")
-    queries = _counter_delta(counters, "prefix_cache_queries_total")
-    if hits is not None and queries and queries > 0:
-        kpi["prefix_hit_rate"] = hits / queries
+    if "_summary" in counters:
+        hits = counters.get("_prefix_hits")
+        queries = counters.get("_prefix_queries")
+        if hits and queries and queries > 0:
+            kpi["prefix_hit_rate"] = hits / queries
+    else:
+        hits = _counter_delta(counters, "prefix_cache_hits_total")
+        queries = _counter_delta(counters, "prefix_cache_queries_total")
+        if hits is not None and queries and queries > 0:
+            kpi["prefix_hit_rate"] = hits / queries
 
     # --- distributions: Δ bucket-счётчиков
-    for prefix, key in zip(_TOKEN_BUCKET_PREFIXES, ("prompt_tokens", "generation_tokens")):
-        dist: list[list[Any]] = []
-        for m, (first_v, last_v) in counters.items():
-            if not m.startswith(prefix):
-                continue
-            le = _le_number(m, prefix)
-            if le is None:
-                continue
-            d = last_v - first_v
-            if d > 0:
-                dist.append([_num(le), int(d)])
-        resp["distributions"][key] = sorted(dist)
+    if "_summary" in counters:
+        for key in ("prompt_tokens", "generation_tokens"):
+            dist = counters.get(f"_{key}_dist")
+            if dist:
+                resp["distributions"][key] = sorted(dist)
+    else:
+        for prefix, key in zip(_TOKEN_BUCKET_PREFIXES, ("prompt_tokens", "generation_tokens")):
+            dist: list[list[Any]] = []
+            for m, (first_v, last_v) in counters.items():
+                if not m.startswith(prefix):
+                    continue
+                le = _le_number(m, prefix)
+                if le is None:
+                    continue
+                d = last_v - first_v
+                if d > 0:
+                    dist.append([_num(le), int(d)])
+            resp["distributions"][key] = sorted(dist)
     return resp
+
+
+async def _model_tokens_summary(
+    db, from_: int, to: int, model: str
+) -> dict[str, Any]:
+    """Сводка model_tokens за период для модели (issue #5): дельты
+    счётчиков, finish reasons, preemptions, prefix, distribution'ы.
+    Пустой dict — данных нет."""
+    rows = rows_to_dicts(
+        await db.execute_fetchall(
+            """SELECT finish_reasons, preemptions, prefix_hits, prefix_queries,
+                      prompt_dist, generation_dist
+               FROM model_tokens WHERE model = ? AND ts >= ? AND ts < ?""",
+            (model, (from_ // 3600) * 3600, to),
+        )
+    )
+    if not rows:
+        return {}
+    out: dict[str, Any] = {"_summary": True}
+    out["_prefix_hits"] = sum(int(r["prefix_hits"]) for r in rows if r["prefix_hits"] is not None) or None
+    out["_prefix_queries"] = (
+        sum(int(r["prefix_queries"]) for r in rows if r["prefix_queries"] is not None)
+        or None
+    )
+    out["_preemptions"] = (
+        sum(int(r["preemptions"]) for r in rows if r["preemptions"] is not None) or None
+    )
+    finish: dict[str, int] = {}
+    for r in rows:
+        if not r["finish_reasons"]:
+            continue
+        try:
+            for k, v in json.loads(r["finish_reasons"]).items():
+                finish[k] = finish.get(k, 0) + int(v)
+        except (TypeError, json.JSONDecodeError):
+            continue
+    out["_finish_reasons"] = finish
+    for col, key in (("prompt_dist", "prompt_tokens"), ("generation_dist", "generation_tokens")):
+        dist: list[list[Any]] = []
+        for r in rows:
+            if not r[col]:
+                continue
+            try:
+                for le, d in json.loads(r[col]).items():
+                    dist.append([_num(float(le)), int(d)])
+            except (TypeError, json.JSONDecodeError, ValueError):
+                continue
+        # суммируем по le (несколько часов могут иметь один и тот же le)
+        by_le: dict[float, int] = {}
+        for le, d in dist:
+            by_le[float(le)] = by_le.get(float(le), 0) + d
+        out[f"_{key}_dist"] = [[_num(le), d] for le, d in sorted(by_le.items()) if d > 0]
+    return out

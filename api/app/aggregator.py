@@ -25,6 +25,7 @@ import time
 from collections import defaultdict
 
 from .config import Retention
+from .model_counters import hour_model_row
 from .storage.db import rows_to_dicts
 
 log = logging.getLogger(__name__)
@@ -71,6 +72,7 @@ class Aggregator:
             "hours": await self._aggregate_hourly(now),
             "days": await self._aggregate_daily(now),
             "tokens": await self._aggregate_tokens(now),
+            "model_tokens": await self._aggregate_model_tokens(now),
             "deleted": await self._apply_retention(now),
         }
         log.info("aggregator cycle: %s", stats)
@@ -250,6 +252,57 @@ class Aggregator:
                 (hour, prompt, completion, requests if finished else None),
             )
             written += 1
+        await self.conn.commit()
+        return written
+
+    async def _aggregate_model_tokens(self, now: int) -> int:
+        """Дельты счётчиков vLLM по модели на закрытый час (issue #5).
+
+        Только для часов, где ещё есть raw (ретенция raw_hours; горизонт
+        за цикл — MAX_HOURS_PER_CYCLE, старейшие догоняются)."""
+        last_closed_hour = (now // 3600) * 3600
+        horizon = max(
+            last_closed_hour - MAX_HOURS_PER_CYCLE * 3600,
+            now - self.ret.raw_hours * 3600,
+        )
+        written = 0
+        for hour in range(last_closed_hour - 3600, horizon - 3600, -3600):
+            models = rows_to_dicts(
+                await self.conn.execute_fetchall(
+                    """SELECT DISTINCT model FROM metric_samples
+                       WHERE source = 'vllm' AND model IS NOT NULL
+                         AND ts >= ? AND ts < ?""",
+                    (hour, hour + 3600),
+                )
+            )
+            for r in models:
+                model = r["model"]
+                if not model:
+                    continue
+                exists = await self.conn.execute_fetchall(
+                    "SELECT 1 FROM model_tokens WHERE ts = ? AND model = ?",
+                    (hour, model),
+                )
+                if exists:
+                    continue
+                row = await hour_model_row(self.conn, hour, model)
+                if row is None:
+                    continue
+                await self.conn.execute(
+                    """INSERT OR IGNORE INTO model_tokens
+                       (ts, model, prompt_tokens, completion_tokens,
+                        requests_finished, finish_reasons, preemptions,
+                        prefix_hits, prefix_queries, prompt_dist,
+                        generation_dist)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        hour, model, row["prompt_tokens"], row["completion_tokens"],
+                        row["requests_finished"], row["finish_reasons"],
+                        row["preemptions"], row["prefix_hits"], row["prefix_queries"],
+                        row["prompt_dist"], row["generation_dist"],
+                    ),
+                )
+                written += 1
         await self.conn.commit()
         return written
 

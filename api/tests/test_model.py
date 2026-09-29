@@ -182,3 +182,57 @@ def test_model_counter_restart(client, db_path):
     assert kpi["finish_reasons"] == {}
     assert kpi["requests_finished"] is None
     assert kpi["preemptions"] is None
+
+
+def test_model_filter_long_period_from_model_tokens(client, db_path):
+    """issue #5: model-фильтр на периоде >24ч — finish reasons / prefix /
+    distributions из агрегата model_tokens (сырых данных уже нет)."""
+    import json
+    import sqlite3
+
+    H0 = (NOW // 3600) * 3600 - 3 * 86_400  # два часа три дня назад
+    rows = [
+        (H0, "m1", 1000, 100, 55, json.dumps({"stop": 50, "length": 5}), 2, 100, 200,
+         json.dumps({"16": 100, "32": 50}), None),
+        (H0 + 3600, "m1", 500, 50, 30, json.dumps({"stop": 30}), 1, 50, 100,
+         json.dumps({"16": 25, "32": 25}), None),
+    ]
+    c = sqlite3.connect(db_path)
+    c.executemany(
+        """INSERT INTO model_tokens
+           (ts, model, prompt_tokens, completion_tokens, requests_finished,
+            finish_reasons, preemptions, prefix_hits, prefix_queries,
+            prompt_dist, generation_dist)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        rows,
+    )
+    c.commit()
+    c.close()
+
+    body = client.get(
+        "/api/model", params={"from": H0 - 86_400, "to": H0 + 7200, "model": "m1"}
+    ).json()
+    kpi = body["kpi"]
+    # finish reasons — сумма по часам
+    assert kpi["finish_reasons"] == {"stop": 80, "length": 5}
+    assert kpi["requests_finished"] == 85
+    # prefix: Δ(100+50)/(200+100)
+    assert kpi["prefix_hit_rate"] == pytest.approx(150 / 300)
+    # preemptions: 2+1
+    assert kpi["preemptions"] == 3
+    # distributions — сумма по le
+    assert body["distributions"]["prompt_tokens"] == [[16, 125], [32, 75]]
+    assert body["distributions"]["generation_tokens"] == []
+
+
+def test_model_filter_long_period_no_model_tokens(client, db_path):
+    """issue #5: данных в model_tokens нет — null, не 0 (разрывы)."""
+    body = client.get(
+        "/api/model", params={"from": NOW - 3 * 86_400, "to": NOW, "model": "ghost"}
+    ).json()
+    kpi = body["kpi"]
+    assert kpi["finish_reasons"] == {}
+    assert kpi["requests_finished"] is None
+    assert kpi["prefix_hit_rate"] is None
+    assert kpi["preemptions"] is None
+    assert body["distributions"] == {"prompt_tokens": [], "generation_tokens": []}
