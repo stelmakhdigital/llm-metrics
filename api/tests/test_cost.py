@@ -188,6 +188,8 @@ def test_tokens_raw_1m(client, db_path):
     )
     body = client.get("/api/cost", params={"from": T, "to": T + 3600}).json()
     assert body["tokens_cost"] == pytest.approx(0.5 + 1.5, **APPROX)
+    assert body["prompt_tokens_cost"] == pytest.approx(0.5, **APPROX)
+    assert body["completion_tokens_cost"] == pytest.approx(1.5, **APPROX)
     assert body["prompt_tokens"] == 1_000_000
     assert body["completion_tokens"] == 1_000_000
     assert body["requests"] == 42

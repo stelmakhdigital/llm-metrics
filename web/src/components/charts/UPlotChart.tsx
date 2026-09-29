@@ -60,7 +60,7 @@ export default function UPlotChart({ series, height = 220, live = false, stack =
           label: s.name,
           stroke: s.color,
           width: 1.5,
-          ...(stack ? { stack: true } : {}),
+          ...(stack ? { stack: true, fill: "origin" } : {}),
         })),
       ],
       scales: {

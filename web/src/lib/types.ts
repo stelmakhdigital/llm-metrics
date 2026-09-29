@@ -59,6 +59,10 @@ export interface CostData {
   currency: string;
   total: number;
   tokens_cost: number;
+  /** Стоимость prompt-токенов по тарифу за период */
+  prompt_tokens_cost: number;
+  /** Стоимость completion-токенов по тарифу за период */
+  completion_tokens_cost: number;
   elec_cost: number;
   kwh: number;
   avg_power_w: number | null;

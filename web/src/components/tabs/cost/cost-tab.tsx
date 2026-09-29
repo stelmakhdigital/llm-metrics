@@ -127,14 +127,15 @@ export function CostTab() {
             </KpiCard>
 
             <KpiCard
-              label="За 1k completion-токенов (вся стоимость)"
-              value={fmtMoney(data.per_1k_out_tok, cur)}
-              sub={
-                <>
-                  prompt+completion+эл. · completion: {" "}
-                  {data.completion_tokens > 0 ? fmtMillions(data.completion_tokens) : "—"}
-                </>
-              }
+              label="Prompt-токены (стоимость)"
+              value={fmtMoney(data.prompt_tokens_cost, cur)}
+              sub={`${data.prompt_tokens > 0 ? fmtMillions(data.prompt_tokens) : "—"} tok по тарифу`}
+            />
+
+            <KpiCard
+              label="Completion-токены (стоимость)"
+              value={fmtMoney(data.completion_tokens_cost, cur)}
+              sub={`${data.completion_tokens > 0 ? fmtMillions(data.completion_tokens) : "—"} tok по тарифу`}
             />
 
             <KpiCard

@@ -152,6 +152,8 @@ async def compute_cost(db, from_s: int, to_s: int) -> dict:
         "requests": 0,
         "prompt_tokens": 0,
         "completion_tokens": 0,
+        "prompt_tokens_cost": 0.0,
+        "completion_tokens_cost": 0.0,
         "by_day": [],
         "cumulative": [],
         "power_by_day": [],
@@ -264,6 +266,12 @@ async def compute_cost(db, from_s: int, to_s: int) -> dict:
                 + c_delta * float(rate["token_completion_per_million_usd"])
             ) / 1_000_000
             cur["tokens_cost"] += tok_cost
+            cur["prompt_tokens_cost"] += (
+                p_delta * float(rate["token_prompt_per_million_usd"]) / 1_000_000
+            )
+            cur["completion_tokens_cost"] += (
+                c_delta * float(rate["token_completion_per_million_usd"]) / 1_000_000
+            )
             cur["prompt_tokens"] += int(p_delta)
             cur["completion_tokens"] += int(c_delta)
             cur["requests"] += int(req_delta)
@@ -279,6 +287,8 @@ async def compute_cost(db, from_s: int, to_s: int) -> dict:
                 + c * float(rate["token_completion_per_million_usd"])
             ) / 1_000_000
             cur["tokens_cost"] += tok_cost
+            cur["prompt_tokens_cost"] += p * float(rate["token_prompt_per_million_usd"]) / 1_000_000
+            cur["completion_tokens_cost"] += c * float(rate["token_completion_per_million_usd"]) / 1_000_000
             cur["prompt_tokens"] += p
             cur["completion_tokens"] += c
             cur["requests"] += req
@@ -296,6 +306,8 @@ async def compute_cost(db, from_s: int, to_s: int) -> dict:
     if covered_s > 0:
         cur["avg_power_w"] = round(energy_ws / covered_s, 1)
     cur["tokens_cost"] = round(cur["tokens_cost"], 6)
+    cur["prompt_tokens_cost"] = round(cur["prompt_tokens_cost"], 6)
+    cur["completion_tokens_cost"] = round(cur["completion_tokens_cost"], 6)
     cur["elec_cost"] = round(cur["elec_cost"], 6)
     cur["kwh"] = round(cur["kwh"], 6)
     cur["total"] = round(cur["total"], 6)
