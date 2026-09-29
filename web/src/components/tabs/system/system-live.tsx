@@ -4,10 +4,8 @@ import { useLive } from "@/lib/live";
 import {
   usePoll,
   type SystemSnapshot,
-  type TopProcRow,
 } from "@/lib/api";
 import {
-  fmtInt,
   fmtMhz,
   fmtMbS,
   fmtMbps,
@@ -27,38 +25,6 @@ import { cn } from "@/lib/utils";
 /** Период опроса /api/system в Live-режиме, мс. */
 export const SYSTEM_POLL_MS = 5_000;
 
-function TopProcesses({ title, rows }: { title: string; rows: TopProcRow[] }) {
-  return (
-    <ChartCard title={title}>
-      {rows.length === 0 ? (
-        <NoData />
-      ) : (
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="text-left text-muted">
-              <th className="pb-1 pr-2 font-medium">PID</th>
-              <th className="pb-1 pr-2 font-medium">Процесс</th>
-              <th className="pb-1 pr-2 text-right font-medium">RAM, MiB</th>
-              <th className="pb-1 text-right font-medium">CPU, %</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(([pid, name, rss, cpu]) => (
-              <tr key={pid} className="border-t border-line/50">
-                <td className="py-1 pr-2 text-muted">{pid}</td>
-                <td className="max-w-[16rem] truncate py-1 pr-2" title={name}>
-                  {name}
-                </td>
-                <td className="py-1 pr-2 text-right tabular-nums">{fmtInt(rss)}</td>
-                <td className="py-1 text-right tabular-nums">{cpu.toFixed(1)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </ChartCard>
-  );
-}
 
 function DiskBars({ disks, title }: { disks: SystemSnapshot["disks"]; title: string }) {
   return (
@@ -210,10 +176,6 @@ export function SystemLive() {
 
           <div className="grid gap-3 xl:grid-cols-2">
             <DiskBars disks={data.disks} title="Занятость дисков (mount'ы)" />
-            <div className="grid gap-3">
-              <TopProcesses title="Топ-5 процессов по CPU" rows={data.top_cpu} />
-              <TopProcesses title="Топ-5 процессов по RAM" rows={data.top_ram} />
-            </div>
           </div>
         </>
       ) : (

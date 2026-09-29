@@ -127,9 +127,6 @@ export function costUrl(from: number, to: number): string {
 
 // -------------------------------------------------------------- /api/system
 
-/** Строка топ-процессов бэка: [pid, имя, RSS MiB, CPU %]. */
-export type TopProcRow = [number, string, number, number];
-
 /** Снимок GET /api/system (поля — api/app/api/routes.py). */
 export interface SystemSnapshot {
   ts: number;
@@ -150,8 +147,6 @@ export interface SystemSnapshot {
   io: { read_mb_s: number | null; write_mb_s: number | null };
   net: { rx_mbps: number | null; tx_mbps: number | null };
   psi: Record<string, Record<string, number | null>>;
-  top_cpu: TopProcRow[];
-  top_ram: TopProcRow[];
 }
 
 // ------------------------------------------------------------------- polling

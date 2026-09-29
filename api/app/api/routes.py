@@ -542,7 +542,6 @@ async def system(request: Request) -> dict[str, Any]:
         r = latest.get(m)
         return r["value"] if r else None
 
-    top_cpu, top_ram = _top_processes()
     return {
         "cpu": {
             "usage": lm("cpu_usage"),
@@ -561,35 +560,8 @@ async def system(request: Request) -> dict[str, Any]:
         "io": {"read_mb_s": lm("disk_read_mb_s"), "write_mb_s": lm("disk_write_mb_s")},
         "net": {"rx_mbps": lm("net_rx_mbps"), "tx_mbps": lm("net_tx_mbps")},
         "psi": psi,
-        "top_cpu": top_cpu,
-        "top_ram": top_ram,
         "ts": int(time.time()),
     }
-
-
-def _top_processes(n: int = 5) -> tuple[list[list[Any]], list[list[Any]]]:
-    """Топ-N процессов по CPU и по RAM (psutil, вне БД)."""
-    try:
-        import psutil
-    except ImportError:
-        return [], []
-    procs: list[tuple[int, str, int, float]] = []
-    for p in psutil.process_iter():
-        try:
-            procs.append(
-                (
-                    p.pid,
-                    p.name()[:80],
-                    (p.memory_info().rss // (1024 * 1024)),
-                    p.cpu_percent(),
-                )
-            )
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            continue
-    fmt = lambda lst: [[pid, name, rss, cpu] for pid, name, rss, cpu in lst]  # noqa: E731
-    top_ram = fmt(sorted(procs, key=lambda x: x[2], reverse=True)[:n])
-    top_cpu = fmt(sorted(procs, key=lambda x: x[3], reverse=True)[:n])
-    return top_cpu, top_ram
 
 
 # ---------------------------------------------------------------------- model

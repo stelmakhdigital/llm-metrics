@@ -264,10 +264,8 @@ def test_system(client, db_path):
     assert body["psi"]["cpu"]["avg10"] == 1.1
     assert body["psi"]["memory"]["avg60"] == 0.2
     assert body["net"]["rx_mbps"] == 100.0
-    # топ-процессы — живой psutil (на тест-машине что-то всегда есть)
-    assert isinstance(body["top_cpu"], list)
-    assert isinstance(body["top_ram"], list)
-    assert len(body["top_ram"]) > 0
+    # issue #3: top_cpu/top_ram убраны (в контейнере виден только uvicorn)
+    assert "top_cpu" not in body and "top_ram" not in body
 
 
 def _read_packets(server, n):
