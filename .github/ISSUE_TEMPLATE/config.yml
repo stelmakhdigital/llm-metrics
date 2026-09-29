@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Вопрос / обсуждение
+    url: https://github.com/stelmakhdigital/llm-metrics/issues
+    about: Вопросы и обсуждения — тоже issue (лейбл enhancement/P3 или вопрос в описании)
