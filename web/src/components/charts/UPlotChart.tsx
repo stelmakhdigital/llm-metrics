@@ -92,7 +92,8 @@ export default function UPlotChart({ series, height = 220, live = false, stack =
       ],
       cursor: { drag: { x: false, y: false } },
       legend: { show: false },
-      padding: [8, 8, 0, 0],
+      // отступы: сверху от заголовка и снизу от текста оси X (симметрично)
+      padding: [14, 12, 14, 12],
     };
 
     const chart = new uPlot(opts, [[...xs], ...values], hostRef.current);
