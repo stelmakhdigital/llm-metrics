@@ -56,6 +56,24 @@ def test_health(client):
         assert st["status"] == "unknown"  # pollers не запускались
 
 
+def test_throttle_names_decoding():
+    """issue #2: ключи THROTTLE_REASON_NAMES — значения битов (1, 2, 4, …);
+    bit 0 должен декодироваться, имена — по значению, а не позиции."""
+    from app.api.routes import _throttle_names
+
+    assert _throttle_names(1) == ["gpu_slowdown"]
+    assert _throttle_names(2) == ["sync_boost"]
+    assert _throttle_names(4) == ["sw_power_brake"]
+    assert _throttle_names(5) == ["gpu_slowdown", "sw_power_brake"]
+    assert _throttle_names(128) == ["sw power cap"]
+    assert _throttle_names(129) == ["gpu_slowdown", "sw power cap"]
+    # биты выше 128 — не декодируются (как раньше: только 2^0…2^7)
+    assert _throttle_names(256) == []
+    assert _throttle_names(0) == []
+    assert _throttle_names(None) == []
+    assert _throttle_names(1.0) == ["gpu_slowdown"]  # из БД float
+
+
 def test_metrics_raw(client, db_path):
     seed_samples(db_path, [
         ("cpu_usage", NOW - 3600 + i, float(i), "system", None, None)

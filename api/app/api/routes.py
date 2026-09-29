@@ -500,12 +500,7 @@ async def gpus(request: Request, live: bool = Query(False)) -> dict[str, Any]:
     """Снимок всех GPU (последние выборки poller'а; ``live=true`` — живое NVML)."""
     rows = await _gpu_snapshot(request, live=live)
     for g in rows:
-        t = g.get("throttle_reasons")
-        g["throttle_reason_names"] = [
-            THROTTLE_REASON_NAMES.get(b, f"bit_{b}")
-            for b in range(1, 9)
-            if isinstance(t, (int, float)) and t and (int(t) >> b) & 1
-        ]
+        g["throttle_reason_names"] = _throttle_names(g.get("throttle_reasons"))
     return {"gpus": rows, "live": live, "ts": int(time.time())}
 
 
@@ -646,12 +641,17 @@ def _src_ok(statuses, name: str) -> bool:
 
 
 def _throttle_names(mask: Any) -> list[str]:
+    """NVML-маска троттлинга → имена причин.
+
+    Ключи `THROTTLE_REASON_NAMES` — **значения** битов (1, 2, 4, …, 128);
+    ищем по `mask & bit`, а не по позиции (issue #2)."""
     if not isinstance(mask, (int, float)) or not mask:
         return []
+    m = int(mask)
     return [
         THROTTLE_REASON_NAMES.get(b, f"bit_{b}")
-        for b in range(1, 9)
-        if (int(mask) >> b) & 1
+        for b in (1, 2, 4, 8, 16, 32, 64, 128)
+        if m & b
     ]
 
 
