@@ -186,6 +186,7 @@ export function SystemLive() {
             <ChartCard
               title={`CPU по ядрам (${data.cpu.per_core.length})`}
               note="текущая загрузка по каждому логическому ядру, %"
+              tip="Текущая загрузка каждого логического ядра CPU, %. Столбики — ядра, последняя пара — гиперпотоки."
             >
               <div className="flex h-24 items-end gap-0.5">
                 {data.cpu.per_core.map((v, i) => (

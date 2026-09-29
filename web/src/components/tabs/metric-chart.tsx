@@ -184,6 +184,7 @@ export function MetricChart({
   to,
   marks,
   note,
+  tip,
   height = 220,
   model,
 }: {
@@ -193,6 +194,8 @@ export function MetricChart({
   to: number;
   marks?: ChartMark[];
   note?: React.ReactNode;
+  /** Пояснение к графику — иконка «?» у заголовка */
+  tip?: string;
   height?: number;
   /** F4.4: фильтр по модели (только вкладки vLLM) */
   model?: string | null;
@@ -247,6 +250,7 @@ export function MetricChart({
     <ChartCard
       title={title}
       note={note}
+      tip={tip}
       legend={
         <LegendChips items={specs.map((s) => ({ name: s.label, color: s.color }))} />
       }

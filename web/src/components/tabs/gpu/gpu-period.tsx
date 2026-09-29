@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import UPlotChart, { type ChartSeries } from "@/components/charts/UPlotChart";
+import { ChartTip } from "../common";
 import { Card, CardContent } from "@/components/ui/card";
 import type { MetricPoint } from "@/lib/types";
 
@@ -20,11 +21,11 @@ const PALETTE = [
 ];
 
 const METRICS = [
-  { id: "gpu_power", label: "мощность W" },
-  { id: "gpu_util", label: "утилизация %" },
-  { id: "gpu_mem_used_mib", label: "VRAM MiB" },
-  { id: "gpu_temp", label: "температура °C" },
-  { id: "gpu_clock_sm", label: "SM clock MHz" },
+  { id: "gpu_power", label: "мощность W", tip: "Мощность каждой GPU по nvidia-smi, Вт." },
+  { id: "gpu_util", label: "утилизация %", tip: "Загрузка вычислительных ядер (SM) каждой GPU, %." },
+  { id: "gpu_mem_used_mib", label: "VRAM MiB", tip: "Занятая видеопамять каждой GPU, MiB (включая KV-кэш)." },
+  { id: "gpu_temp", label: "температура °C", tip: "Температура каждой GPU, °C." },
+  { id: "gpu_clock_sm", label: "SM clock MHz", tip: "Частота вычислительных ядер (SM) каждой GPU, МГц." },
 ] as const;
 
 type MetricId = (typeof METRICS)[number]["id"];
@@ -257,7 +258,10 @@ export function GpuPeriod({ from, to }: { from: number; to: number }) {
                 const hasPoints = series.some((s) => s.points.length > 0);
                 return (
                   <div key={m.id}>
-                    <p className="mb-1 text-xs text-muted">{m.label}</p>
+                    <p className="mb-1 flex items-center gap-1.5 text-xs text-muted">
+                      {m.label}
+                      <ChartTip text={m.tip} />
+                    </p>
                     {loadingPoints && !rows ? (
                       <Skeleton />
                     ) : hasPoints ? (

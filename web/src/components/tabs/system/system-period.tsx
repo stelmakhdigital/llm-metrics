@@ -101,7 +101,7 @@ function PeriodDisks({ from, to, mounts }: { from: number; to: number; mounts: s
   }, [mounts, from, to]);
 
   return (
-    <ChartCard title="Занятость дисков (последнее значение периода)">
+    <ChartCard title="Занятость дисков (последнее значение периода)" tip="Занятость дисковых пространств по mount-точкам, %. Последняя точка за период.">
       {error != null ? (
         <ErrorBanner message={error} />
       ) : rows == null ? (
@@ -177,6 +177,7 @@ export function SystemPeriod() {
 
       <ChartCard
         title="CPU, %"
+        tip="Общая загрузка CPU за период, %. Среднее по ядрам."
         legend={
           <div className="flex items-center gap-1">
             <button
@@ -210,6 +211,7 @@ export function SystemPeriod() {
       >
         <MetricChart
           title={cpuMode === "cores" ? `CPU по ядрам (${coreCount})` : "CPU (общая загрузка)"}
+          tip={cpuMode === "cores" ? "Загрузка каждого ядра CPU, % (последние ядра — гиперпотоки)." : "Общая загрузка CPU, %."}
           specs={cpuSpecs}
           from={from}
           to={to}
@@ -220,20 +222,27 @@ export function SystemPeriod() {
       <div className="grid gap-3 xl:grid-cols-2">
         <MetricChart
           title="RAM, MB"
+          tip="Занятая оперативная память, МБ."
           specs={RAM_SPECS}
           from={from}
           to={to}
           note={`текущее (live): занято ${fmtMb(snap?.ram.used_mb ?? null)} из ${fmtMb(snap?.ram.total_mb ?? null)}`}
         />
-        <MetricChart title="Swap used, MB" specs={SWAP_SPECS} from={from} to={to} />
-        <MetricChart title="Диск: read / write, MB/s" specs={DISK_IO_SPECS} from={from} to={to} />
-        <MetricChart title="Сеть: rx / tx, Мбит/с" specs={NET_SPECS} from={from} to={to} />
-        <MetricChart title="CPU steal, %" specs={STEAL_SPECS} from={from} to={to} />
-        <MetricChart title="Частота CPU, МГц" specs={FREQ_SPECS} from={from} to={to} />
+        <MetricChart title="Swap used, MB" specs={SWAP_SPECS} from={from} to={to} tip="Использованный swap (файл/раздел подкачки), МБ."
+          />
+        <MetricChart title="Диск: read / write, MB/s" specs={DISK_IO_SPECS} from={from} to={to} tip="Скорость чтения/записи всех дисков, МБ/с."
+          />
+        <MetricChart title="Сеть: rx / tx, Мбит/с" specs={NET_SPECS} from={from} to={to} tip="Сетевой трафик: входящий (rx) и исходящий (tx), Мбит/с."
+          />
+        <MetricChart title="CPU steal, %" specs={STEAL_SPECS} from={from} to={to} tip="Доля времени, когда CPU ждал процессоры у хост-гипервизора (VM). 0 — не виртуализация/нет конкуренции."
+          />
+        <MetricChart title="Частота CPU, МГц" specs={FREQ_SPECS} from={from} to={to} tip="Средняя частота CPU, МГц. Снижается при экономии энергии или перегреве."
+          />
         {PSI_KINDS.map((k) => (
           <MetricChart
             key={k.kind}
             title={`${k.label}: some, %`}
+            tip={`Доля времени в состоянии «${k.label}» (ожидание), %.`}
             specs={psiSpecs(k.kind)}
             from={from}
             to={to}

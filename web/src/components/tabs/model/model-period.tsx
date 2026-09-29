@@ -127,6 +127,7 @@ export function ModelPeriod() {
               to={to as number}
               marks={marks}
               model={model}
+              tip="Время от поступления запроса до первого токена ответа (p50/p95). Квантили из кумулятивного histogram'а vLLM: отражают статистику с момента запуска/рестарта vLLM, не только выбранный период."
             />
             <MetricChart
               title="ITL / TPOT, с"
@@ -135,6 +136,7 @@ export function ModelPeriod() {
               to={to as number}
               marks={marks}
               model={model}
+              tip="ITL — пауза между последовательными токенами, TPOT — среднее время на один сгенерированный токен (p50/p95). Квантили из кумулятивного histogram'а vLLM (с момента запуска/рестарта)."
             />
             <MetricChart
               title="E2E latency p95, с"
@@ -143,6 +145,7 @@ export function ModelPeriod() {
               to={to as number}
               marks={marks}
               model={model}
+              tip="Полное время запроса: от поступления до последнего токена, p95. Квантиль из кумулятивного histogram'а vLLM; растёт с длиной генерации."
             />
             <MetricChart
               title="Throughput, токены/с"
@@ -151,6 +154,7 @@ export function ModelPeriod() {
               to={to as number}
               marks={marks}
               model={model}
+              tip="Скорость обработки токенов: prompt (вход, включает токены из prefix-кэша — поэтому может быть много выше, чем «Avg prompt throughput» в логах vLLM) и generation (выход)."
             />
             <MetricChart
               title="KV cache usage"
@@ -168,6 +172,7 @@ export function ModelPeriod() {
               to={to as number}
               marks={marks}
               model={model}
+              tip="Сколько запросов ждёт начала обработки в очереди vLLM (последнее значение точки). 0 — все поступающие запросы сразу уходят в работу."
             />
             <MetricChart
               title="Prefix cache hit rate"
@@ -176,6 +181,7 @@ export function ModelPeriod() {
               to={to as number}
               marks={marks}
               model={model}
+              tip="Доля prompt-токенов, найденных в prefix-кэше (hits/queries). Чем выше — тем больше запросов не пересчитывают общую часть промпта."
             />
           </div>
         </>

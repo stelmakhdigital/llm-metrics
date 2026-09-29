@@ -2,12 +2,13 @@
 
 import { NA } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { ChartTip } from "../common";
 
 /**
  * Гистограмма длин prompt/generation-токенов (div-бары) из
  * distributions.{prompt,generation}_tokens — пары [le, count-дельта].
  */
-function TokenHistogram({ title, buckets }: { title: string; buckets: [number, number][] }) {
+function TokenHistogram({ title, buckets, tip }: { title: string; buckets: [number, number][]; tip: string }) {
   const rows = [...buckets].sort((a, b) => a[0] - b[0]).filter(([, c]) => c > 0);
   const max = Math.max(0, ...rows.map(([, c]) => c));
   const total = rows.reduce((s, [, c]) => s + c, 0);
@@ -15,7 +16,10 @@ function TokenHistogram({ title, buckets }: { title: string; buckets: [number, n
   return (
     <div className="rounded-xl border border-line bg-panel p-3">
       <div className="mb-2 flex items-center justify-between">
-        <div className="text-sm font-medium">{title}</div>
+        <div className="flex items-center gap-1.5 text-sm font-medium">
+          {title}
+          <ChartTip text={tip} />
+        </div>
         <div className="text-xs text-muted">всего: {total > 0 ? total : NA}</div>
       </div>
       {rows.length === 0 ? (
@@ -68,10 +72,12 @@ export function TokenDistributions({
       <TokenHistogram
         title="Распределение prompt-токенов"
         buckets={distributions?.prompt_tokens ?? []}
+        tip="Сколько завершённых запросов за период попало в каждый диапазон длины входного промпта (в токенах, включая cached prefix). Объясняет пики «Токены prompt/s»."
       />
       <TokenHistogram
         title="Распределение generation-токенов"
         buckets={distributions?.generation_tokens ?? []}
+        tip="Сколько завершённых запросов за период попало в каждый диапазон длины сгенерированного ответа (в токенах). Длинные ответы дают высокий E2E."
       />
     </div>
   );

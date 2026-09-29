@@ -1,6 +1,7 @@
 "use client";
 
 import { type ReactNode } from "react";
+import { CircleHelp } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /** KPI-карточка: подпись, значение, опциональная подстрока/дочерний контент. */
@@ -49,11 +50,21 @@ export function LegendChips({
 }
 
 /** Карточка-график: заголовок, легенда, действия (экспорт и т.п.), содержимое. */
+/** Иконка «?» с нативным тултипом — что показывает график. */
+export function ChartTip({ text }: { text: string }) {
+  return (
+    <span className="cursor-help text-muted" title={text}>
+      <CircleHelp className="size-3.5" />
+    </span>
+  );
+}
+
 export function ChartCard({
   title,
   legend,
   actions,
   note,
+  tip,
   children,
   className,
 }: {
@@ -61,13 +72,18 @@ export function ChartCard({
   legend?: ReactNode;
   actions?: ReactNode;
   note?: ReactNode;
+  /** Пояснение к графику — показывается при наведении на иконку «?» у заголовка */
+  tip?: string;
   children: ReactNode;
   className?: string;
 }) {
   return (
     <div className={cn("rounded-xl border border-line bg-panel p-3", className)}>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-1">
-        <div className="text-sm font-medium">{title}</div>
+        <div className="flex items-center gap-1.5 text-sm font-medium">
+          {title}
+          {tip && <ChartTip text={tip} />}
+        </div>
         <div className="flex items-center gap-2">
           {legend}
           {actions}
