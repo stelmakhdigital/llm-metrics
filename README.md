@@ -1,88 +1,58 @@
 # llm-metrics — веб-мониторинг vLLM-сервера
 
-Стек: FastAPI (`api/`) + Next.js (`web/`), SQLite WAL. ТЗ —
-`TZ-vllm-metrics-app.md`, контекст — `PROJECT_MEMORY.md`, план — `roadmap.md`.
+Панель мониторинга vLLM-инференса: загрузка GPU, латентность (TTFT/TPOT/ITL/E2E),
+throughput, KV-кэш, стоимость (токены + электричество), логи vLLM и алерты
+(в т.ч. в Telegram).
 
-## Запуск
+**Стек:** FastAPI (`api/`) + Next.js/TS/Tailwind (`web/`), SQLite WAL + Alembic,
+uPlot-графики. API и UI — в `docs/`.
 
-Prod (сервер с vLLM на хосте): vLLM запускается хост-скриптом (обёртка
-`make vllm-start` = nohup над `~/bin/work-fp8.sh`, лог → файл), api + web —
-`docker compose up -d --build` (наружу только web :3000; api ходит в vLLM
-по `http://host.docker.internal:8000`, скрипт vLLM должен слушать 0.0.0.0).
-Конфиг — `.env`: `cp .env.example .env` и отредактировать (URL vLLM,
-пути хоста, опрос/ретенция, тарифы, алерты).
-Подробная инструкция (установка, Telegram-алерты, эксплуатация) —
-[`docs/DEPLOY.md`](docs/DEPLOY.md).
-При обновлении схемы БД: `cd api && alembic upgrade head` (миграции в
-`api/migrations`; старая БД поднимается и авто-bootstrap-ом — `CREATE TABLE
-IF NOT EXISTS`).
+## Возможности
 
-Dev (без docker): `make dev-api` (uvicorn :8100) + `make dev-web` (:3000);
-мок vLLM — `make mock-vllm`; тесты — `make test-api` (web — `cd web && npm run build`).
+| Вкладка | Что показывает |
+|---|---|
+| **Модель (vLLM)** | running/waiting, prompt/generation tok/s, TTFT/TPOT/ITL/E2E p50/p95, KV-кэш, prefix-cache, финиш-причины, распределения длин запросов; фильтр по модели (смена модели — отдельная история) |
+| **GPU** | мощность, утилизация, VRAM, температура, частоты — по каждой GPU хоста (NVML) |
+| **Система** | CPU (общий/по ядрам), RAM, swap, disk I/O, сеть, steal, частота, psi, диски |
+| **Стоимость** | стоимость по тарифам (prompt/completion + электричество), средний день, прогноз на месяц, «к платёжке»; тарифы версионируются, история пересчитывается |
+| **Логи** | строки vLLM-лога с фильтрами и мини-графиком по дням |
+| **Алерты** | правила по метрикам/статусам, журнал, Telegram-уведомления |
 
-## Вкладки
+Режимы: Live (SSE, ~2-5 с) и периоды 5м / 1ч / 24ч / 7д / 30д (агрегаты
+hourly/daily). Сбой источника не роняет остальные — на графике разрыв, не 0.
 
-Модель, GPU, Система, Стоимость, Логи — по ТЗ §5. Дополнительно (F4):
+## Документация
 
-### Алерты (вкладка «Алерты»)
+* [`docs/DEPLOY.md`](docs/DEPLOY.md) — установка и запуск: nvidia-container-toolkit,
+  docker compose, vLLM на хосте, Telegram-алерты, перенос, эксплуатация;
+* [`docs/CONFIG.md`](docs/CONFIG.md) — конфигурация (все переменные `.env`)
+  и примеры хост-скриптов запуска vLLM;
+* [`docs/api-contracts.md`](docs/api-contracts.md) — API-контракты
+  (`/api/live`, `/api/metrics`, `/api/model`, `/api/cost`, SSE);
+* [`docs/vllm-metrics-sample.txt`](docs/vllm-metrics-sample.txt) — образец
+  `/metrics` vLLM (исходная выборка метрик).
 
-* Движок (`api/app/alerts`) раз в `alerts.check_interval_s` (default 30 с)
-  проверяет правила по метрикам и статусам источников; журнал — таблица
-  `alerts` (активные восстанавливаются после рестарта).
-* Telegram: укажите в UI (или в `TELEGRAM_WEBHOOK` в `.env` / файле
-  `secrets/telegram_webhook.txt`)
-  полный URL `https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<CHAT>`;
-  кнопка «Тест» проверяет доставку. UI-настройки имеют приоритет над конфигом.
-* Правила (порог, оператор, «длится N с», пауза после восстановления, уровень
-  warning/critical) редактируются на вкладке; «Сбросить» — значения по
-  умолчанию (оффлайн источников, KV-кэш >90%, очередь >20, TTFT p95 >2 с,
-  троттлинг GPU, диск / >90%).
-* Счётчик активных алертов — колокольчик в шапке.
+## Быстрый старт
 
-### Экспорт графиков (F4.2)
-
-На карточках периодов-графиков — кнопки: **CSV** (время + серии, BOM для
-Excel) и **PNG** (снимок графика).
-
-### Health (вкладка «Health»)
-
-Сводный статус: сервис (версия/аптайм/БД), источники (статус + последний
-опрос/выборка + ошибка), модель vLLM, GPU (мощность/темп/VRAM/троттлинг/ECC),
-диски, ошибки логов за 24ч, активные алерты. Обновление раз в 30 с.
-
-### Multi-модель (F4.4)
-
-Селектор в шапке: «Все модели» или конкретная модель (список —
-`/api/model/models`, история по метке `model`). Выбранная модель фильтрует
-KPI и графики вкладки «Модель» (сырые данные, глубина = ретенция 168 ч).
-
-## Логи vLLM (вкладка «Логи»)
-
-Лог-индексатор (`api/app/logs`) опрашивает источник из `.env`
-(`LOG_SOURCE_*`) раз в `LOG_POLL_S` (default 1 с) и пишет его в `log_entries`
-(ретенция — `LOG_RETENTION_DAYS`, default **14 дней**, ежечасная чистка).
-Тип источника — `file` (файл, default) или `docker` (`docker logs <container>`).
-
-### Файл логов (тип `file`, по умолчанию)
-
-В prod лог vLLM — хост-файл, который пишет обёртка (`scripts/vllm-host.sh`,
-`$VLLM_LOG_DIR/vllm.log`); api монтирует каталог read-only (`/var/log/vllm`):
-
-```
-LOG_SOURCE_NAME=vllm            # имя источника (видно в UI и в /api/health)
-LOG_SOURCE_TYPE=file
-LOG_SOURCE_PATH=/var/log/vllm/vllm.log
+```bash
+# Сервер с vLLM (подробно — docs/DEPLOY.md):
+git clone <repo-url> llm-metrics && cd llm-metrics
+cp .env.example .env && $EDITOR .env   # VLLM_URL, VLLM_SCRIPT, VLLM_LOG_DIR, тарифы
+make build            # образы api + web
+make vllm-start       # vLLM на хосте (nohup, лог → $VLLM_LOG_DIR/vllm.log)
+make start            # api + web (наружу только web :3000)
+curl -s http://127.0.0.1:3000/api/health
 ```
 
-* Tail идёт по offset+inode: ротация/пересоздание файла обрабатывается,
-  при исчезновении файла источник помечается `offline` (приложение живёт,
-  остальные источники не страдают).
-* Первая встреча файла — старт **с конца** (история до запуска индексатора
-  не подтягивается).
+Dev (без docker): `make dev-api` (uvicorn :8100) + `make dev-web` (:3000),
+мок vLLM — `make mock-vllm`. Тесты: `make test-api`; web — `cd web && npm run build`.
 
-### Что попадает в UI
+## Архитектура (кратко)
 
-Вкладка «Логи»: мини-график по дням/уровням, таблица (фильтры уровень/
-текст/источник, страницы 100/250/500), Live-хвост (SSE), экспорт
-txt/csv, автопарсинг stat-строк vLLM в боковую колонку
-(Running/Waiting/KV%/throughput, `api/app/logs/patterns.py`).
+* **vLLM — процесс на хосте** (`--host 0.0.0.0:8000`, свой скрипт, пример —
+  `docs/CONFIG.md`); не знает про мониторинг.
+* **api** (в docker, 8100 наружу не открыт): коллекторы vLLM
+  (`host.docker.internal:8000`), NVML (все GPU хоста), лог-тейлер (bind-ro),
+  SQLite, агрегатор hourly/daily, стоимость, алерты.
+* **web** (Next.js, :3000): UI + rewrite `/api/*` на api.
+* БД — `./data/metrics.db` (WAL); бэкап = копия файла.
