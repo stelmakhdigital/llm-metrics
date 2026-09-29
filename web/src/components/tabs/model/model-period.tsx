@@ -40,6 +40,7 @@ const THROUGHPUT_SPECS: MetricSpec[] = [
 
 const KV_SPECS: MetricSpec[] = [{ metric: "kv_cache_usage", label: "KV cache", color: PALETTE[2] }];
 const QUEUE_SPECS: MetricSpec[] = [
+  { metric: "num_requests_running", label: "running", color: PALETTE[3] },
   { metric: "num_requests_waiting", label: "waiting", color: PALETTE[4] },
 ];
 const PREFIX_SPECS: MetricSpec[] = [
@@ -166,13 +167,13 @@ export function ModelPeriod() {
               note="Значение — как хранит коллектор (доля 0..1 или % — уточняется бэком)."
             />
             <MetricChart
-              title="Очередь (waiting requests)"
+              title="Запросы: running / waiting"
               specs={QUEUE_SPECS}
               from={from as number}
               to={to as number}
               marks={marks}
               model={model}
-              tip="Сколько запросов ждёт начала обработки в очереди vLLM (последнее значение точки). 0 — все поступающие запросы сразу уходят в работу."
+              tip="Сколько запросов сейчас в работе (running) и сколько ждёт в очереди (waiting). 0 в очереди — все поступающие запросы сразу уходят в работу."
             />
             <MetricChart
               title="Prefix cache hit rate"
