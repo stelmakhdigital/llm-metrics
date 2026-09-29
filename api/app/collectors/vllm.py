@@ -16,6 +16,9 @@
 * ``prefix_hit_rate_60s`` — rolling за последние ~60 с (Δhits/Δqueries от
   самой старой точки окна; история ~90 с, на рестарт/нехватку истории —
   отсутствует);
+* ``prompt_tokens_rate_60s`` / ``generation_tokens_rate_60s`` — rolling
+  rates за последние ~60 с (та же история/окно; для сглаживания
+  live-карточек «Токены prompt/s» и «Токены генерации/s») — issue #1;
 * **сырые** счётчики (для токенизатора/периодов): ``*_total`` как есть;
 * finish reasons: сырые счётчики ``request_success_total_{reason}``
   (stop/length/abort/error/... — любой лейбл ``finished_reason``);
@@ -102,7 +105,7 @@ SNAPSHOT_METRIC_NAMES: set[str] = (
     {logical for logical, _, _ in GAUGES}
     | {rate for rate, _, _ in COUNTERS}
     | {f"{base}_{sfx}" for base, _ in HISTOGRAMS for sfx in ("p50", "p95")}
-    | {"prefix_hit_rate_60s"}
+    | {"prefix_hit_rate_60s", "prompt_tokens_rate_60s", "generation_tokens_rate_60s"}
 )
 
 
@@ -153,8 +156,9 @@ class VllmCollector:
     def __init__(self, cfg: VllmSource):
         self.cfg = cfg
         self._prev: dict[str, tuple[int, float]] = {}  # raw name -> (ts, value)
-        # История (ts, hits_total, queries_total) для rolling prefix hit rate ~60 с
-        self._pfx_hist: list[tuple[int, float, float]] = []
+        # История (ts, hits, queries, prompt_total, gen_total) для rolling
+        # ~60 с (prefix hit rate + rates токенов, live-карточки; issue #1)
+        self._roll_hist: list[tuple[int, float, float, float | None, float | None]] = []
         self.model_name: str | None = None  # кэш последнего известного имени
         # Кэш последнего снимка (F1, docs/api-contracts.md): без SQL читают
         # SSE /api/live и API. {"ts", "model", "metrics": {имя: значение}}
@@ -217,23 +221,45 @@ class VllmCollector:
         if q and h is not None:
             samples.append(Sample("prefix_hit_rate", now, h / q, "vllm", None, model))
 
-        # Rolling prefix hit rate за последние ~60 с (сглаживание live-карточки)
+        # Rolling за последние ~60 с: prefix hit rate + rates токенов
+        # (сглаживание live-карточек; issue #1)
         h_raw = raw_values.get("prefix_cache_hits_total")
         q_raw = raw_values.get("prefix_cache_queries_total")
-        if h_raw is not None and q_raw is not None:
-            hist = self._pfx_hist
-            if hist and (h_raw < hist[-1][1] or q_raw < hist[-1][2]):
-                hist.clear()  # рестарт vLLM — счётчики упали
-            hist.append((now, h_raw, q_raw))
+        p_raw = raw_values.get("prompt_tokens_total")
+        g_raw = raw_values.get("generation_tokens_total")
+        if any(v is not None for v in (h_raw, q_raw, p_raw, g_raw)):
+            hist = self._roll_hist
+            last = hist[-1] if hist else None
+            if last is not None:
+                # рестарт vLLM — любой из счётчиков упал
+                if (
+                    (h_raw is not None and last[1] is not None and h_raw < last[1])
+                    or (q_raw is not None and last[2] is not None and q_raw < last[2])
+                    or (p_raw is not None and last[3] is not None and p_raw < last[3])
+                    or (g_raw is not None and last[4] is not None and g_raw < last[4])
+                ):
+                    hist.clear()
+            hist.append((now, h_raw, q_raw, p_raw, g_raw))
             while hist and now - hist[0][0] > 90:
                 hist.pop(0)
-            base = next((pt for pt in reversed(hist[:-1]) if now - pt[0] >= 60), None)
+            base = next(
+                (pt for pt in reversed(hist[:-1]) if now - pt[0] >= 60), None
+            )
             if base is not None:
-                dq = q_raw - base[2]
-                dh = h_raw - base[1]
+                dt = now - base[0]
+                dq = (q_raw or 0) - (base[2] or 0)
+                dh = (h_raw or 0) - (base[1] or 0)
                 if dq > 0 and dh >= 0:
                     samples.append(
                         Sample("prefix_hit_rate_60s", now, dh / dq, "vllm", None, model)
+                    )
+                if p_raw is not None and base[3] is not None and p_raw >= base[3] and dt > 0:
+                    samples.append(
+                        Sample("prompt_tokens_rate_60s", now, (p_raw - base[3]) / dt, "vllm", None, model)
+                    )
+                if g_raw is not None and base[4] is not None and g_raw >= base[4] and dt > 0:
+                    samples.append(
+                        Sample("generation_tokens_rate_60s", now, (g_raw - base[4]) / dt, "vllm", None, model)
                     )
 
         # Finish reasons — сырые счётчики с суффиксом {reason}

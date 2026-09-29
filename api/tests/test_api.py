@@ -398,6 +398,38 @@ def test_live_sse_prefix_hit_rate_rolling(live_server, monkeypatch):
     assert packets[0]["kpi"]["prefix_hit_rate"] == pytest.approx(0.82)
 
 
+def test_live_sse_token_rates_60s_fallback(live_server, monkeypatch):
+    """issue #1: live prompt_rate/gen_rate берут rolling ~60 с из снимка,
+    при его отсутствии — 5-с rate, если и его нет — null."""
+    from app.api import routes
+
+    monkeypatch.setattr(routes, "LIVE_INTERVAL_S", 0.2)
+    app = live_server["app"]
+    app.state.snapshots["vllm"] = {
+        "ts": NOW,
+        "model": "m",
+        "metrics": {
+            "prompt_tokens_rate": 90000.0,
+            "generation_tokens_rate": 60.0,
+            "prompt_tokens_rate_60s": 1393.8,
+            "generation_tokens_rate_60s": 2.3,
+        },
+    }
+    app.state.statuses["vllm"].ok()
+    kpi = _read_packets(live_server, 1)[0]["kpi"]
+    assert kpi["prompt_rate"] == pytest.approx(1393.8)  # 60s, а не всплеск 90000
+    assert kpi["gen_rate"] == pytest.approx(2.3)
+
+    # без 60s-значений → fallback на 5-с rate
+    app.state.snapshots["vllm"]["metrics"] = {
+        "prompt_tokens_rate": 12.4,
+        "generation_tokens_rate": 34.1,
+    }
+    kpi = _read_packets(live_server, 1)[0]["kpi"]
+    assert kpi["prompt_rate"] == pytest.approx(12.4)
+    assert kpi["gen_rate"] == pytest.approx(34.1)
+
+
 def test_live_sse_mixed_sources_offline(live_server, monkeypatch):
     # vLLM online, GPU/system offline → их блоки null
     from app.api import routes

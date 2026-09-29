@@ -162,6 +162,31 @@ def test_prefix_hit_rate_60s_rolling():
     asyncio.run(run())
 
 
+def test_prompt_gen_rate_60s_rolling():
+    """Сглаживание live-карточек (issue #1): 5-с всплеск 90k токенов →
+    5-с rate = 18000, rolling ~60 с ≈ среднее; на рестарт — rolling нет."""
+    import asyncio
+
+    async def run():
+        col = VllmCollector(VllmSource())
+        await col.poll(FakeClient(_small_text(0.0, 0.0)), now=1000)
+        await col.poll(FakeClient(_small_text(600.0, 120.0)), now=1060)
+        # 5-с всплеск: prompt 600→90600 (Δ90000 за 5 с)
+        s3 = await col.poll(FakeClient(_small_text(90600.0, 150.0)), now=1065)
+        m3 = by_metric(s3)
+        assert m3["prompt_tokens_rate"].value == pytest.approx(90000.0 / 5)
+        # rolling ~60 с: от точки 1000 (Δ90600 за 65 с) — среднее, не всплеск
+        assert m3["prompt_tokens_rate_60s"].value == pytest.approx(90600.0 / 65)
+        assert m3["generation_tokens_rate_60s"].value == pytest.approx(150.0 / 65)
+        assert "prompt_tokens_rate_60s" in col.last_snapshot["metrics"]
+        assert "generation_tokens_rate_60s" in col.last_snapshot["metrics"]
+        # рестарт: счётчики упали → история очищена, rolling отсутствует
+        s4 = await col.poll(FakeClient(_small_text(10.0, 10.0)), now=1070)
+        assert "prompt_tokens_rate_60s" not in by_metric(s4)
+
+    asyncio.run(run())
+
+
 def test_token_bucket_counters_stored():
     """Кумулятивные счётчики bucket'ов длин prompt/generation (F1):
     ``request_prompt_tokens_bucket_{le}`` / ``request_generation_tokens_bucket_{le}``,

@@ -695,11 +695,14 @@ def _build_live_packet(request: Request) -> dict[str, Any]:
         q = m.get("prefix_cache_queries_rate")
         h = m.get("prefix_cache_hits_rate")
         rolling = m.get("prefix_hit_rate_60s")  # сглаживание ~60 с (коллектор)
+        p60 = m.get("prompt_tokens_rate_60s")
+        g60 = m.get("generation_tokens_rate_60s")
         kpi = {
             "running": m.get("num_requests_running"),
             "waiting": m.get("num_requests_waiting"),
-            "prompt_rate": m.get("prompt_tokens_rate"),
-            "gen_rate": m.get("generation_tokens_rate"),
+            # rolling ~60 с, иначе 5-с снапшот (issue #1: 5-с окно мигает 0↔10k)
+            "prompt_rate": p60 if p60 is not None else m.get("prompt_tokens_rate"),
+            "gen_rate": g60 if g60 is not None else m.get("generation_tokens_rate"),
             "kv_cache": m.get("kv_cache_usage"),
             "prefix_hit_rate": (
                 rolling

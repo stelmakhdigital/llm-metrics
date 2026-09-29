@@ -53,8 +53,8 @@ export function liveKpiCards(
   return [
     { label: "Running requests", value: fmtInt(g("running")) },
     { label: "Waiting requests", value: fmtInt(g("waiting")) },
-    { label: "Токены prompt/s", value: fmtTokS(g("prompt_rate")) },
-    { label: "Токены generation/s", value: fmtTokS(g("gen_rate")) },
+    { label: "Токены prompt/s (60 с)", value: fmtTokS(g("prompt_rate")) },
+    { label: "Токены generation/s (60 с)", value: fmtTokS(g("gen_rate")) },
     {
       label: "TTFT p95",
       value: fmtLatency(g("ttft_p95")),
