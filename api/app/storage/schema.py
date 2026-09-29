@@ -22,6 +22,7 @@ SCHEMA_STATEMENTS: list[str] = [
         metric TEXT    NOT NULL,
         hour INTEGER   NOT NULL,  -- epoch начала часа (UTC)
         gpu INTEGER,              -- индекс GPU (gpu-метрики), иначе NULL
+        model TEXT,               -- модель vLLM (NULL — legacy/не-vLLM)
         avg REAL,
         min REAL,
         max REAL,
@@ -29,13 +30,14 @@ SCHEMA_STATEMENTS: list[str] = [
         count INTEGER
     )
     """,
-    # COALESCE(gpu, -1): для gpu=NULL — одна строка на (metric, hour)
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_metric_hourly_metric_hour ON metric_hourly(metric, hour, COALESCE(gpu, -1))",
+    # COALESCE(gpu, -1)/COALESCE(model, ''): gpu=NULL — одна строка на (metric, hour)
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_metric_hourly_metric_hour ON metric_hourly(metric, hour, COALESCE(gpu, -1), COALESCE(model, ''))",
     """
     CREATE TABLE IF NOT EXISTS metric_daily (
         metric TEXT    NOT NULL,
         day INTEGER    NOT NULL,  -- epoch начала суток (UTC)
         gpu INTEGER,              -- индекс GPU (gpu-метрики), иначе NULL
+        model TEXT,               -- модель vLLM (NULL — legacy/не-vLLM)
         avg REAL,
         min REAL,
         max REAL,
@@ -44,7 +46,7 @@ SCHEMA_STATEMENTS: list[str] = [
         count INTEGER
     )
     """,
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_metric_daily_metric_day ON metric_daily(metric, day, COALESCE(gpu, -1))",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_metric_daily_metric_day ON metric_daily(metric, day, COALESCE(gpu, -1), COALESCE(model, ''))",
     """
     CREATE TABLE IF NOT EXISTS tokens (
         ts INTEGER               NOT NULL,  -- epoch начала часа (UTC)

@@ -202,25 +202,34 @@ def _ts(last, metric: str, gid: int | None) -> Any:
 
 
 async def _aggregate_series(
-    db, table: str, col: str, metric: str, gpu: int | None, start: int, to: int
+    db,
+    table: str,
+    col: str,
+    metric: str,
+    gpu: int | None,
+    start: int,
+    to: int,
+    model: str | None = None,
 ) -> list[dict[str, Any]]:
     """Строки (col, avg) из metric_hourly/metric_daily.
 
     ``gpu`` задан — только эта gpu; иначе — AVG по строкам gpu за окно
-    (для не-GPU-метрик одна строка с gpu=NULL — как раньше)."""
+    (для не-GPU-метрик одна строка с gpu=NULL — как раньше).
+    ``model`` задан — только строки этой модели."""
+    mcond = " AND model = ?" if model is not None else ""
     if gpu is not None:
         sql = (
             f"SELECT {col}, avg FROM {table} "
-            f"WHERE metric = ? AND gpu = ? AND {col} >= ? AND {col} < ? ORDER BY {col}"
+            f"WHERE metric = ? AND gpu = ?{mcond} AND {col} >= ? AND {col} < ? ORDER BY {col}"
         )
-        params: tuple = (metric, gpu, start, to)
+        params: tuple = (metric, gpu, *( (model,) if model is not None else () ), start, to)
     else:
         sql = (
             f"SELECT {col}, AVG(avg) AS avg FROM {table} "
-            f"WHERE metric = ? AND {col} >= ? AND {col} < ? "
+            f"WHERE metric = ?{mcond} AND {col} >= ? AND {col} < ? "
             f"GROUP BY {col} ORDER BY {col}"
         )
-        params = (metric, start, to)
+        params = (metric, *( (model,) if model is not None else () ), start, to)
     return rows_to_dicts(await db.execute_fetchall(sql, params))
 
 
@@ -369,19 +378,50 @@ async def metric_series(
     span = to - from_
     db = _db(request)
     if model is not None:
-        # F4.4: фильтр по модели — только сырые (hourly/daily метки не имеют;
-        # глубина — ретенция raw, 168ч). Пустой результат — пустой ответ.
-        rows = rows_to_dicts(
-            await db.execute_fetchall(
-                "SELECT ts, value FROM metric_samples "
-                "WHERE metric = ? AND model = ? AND ts >= ? AND ts <= ? ORDER BY ts",
-                (metric, model, from_, to),
+        # F4.4: фильтр по модели. ≤24ч — сырые; до 14д — hourly; дальше —
+        # daily (fallback hourly). Глубина = ретенция агрегатов; более старые
+        # окна без метки model (до миграции 0004) в фильтр не попадают.
+        if span <= RAW_MAX_SPAN_S:
+            rows = rows_to_dicts(
+                await db.execute_fetchall(
+                    "SELECT ts, value FROM metric_samples "
+                    "WHERE metric = ? AND model = ? AND ts >= ? AND ts <= ? ORDER BY ts",
+                    (metric, model, from_, to),
+                )
             )
+            points = [[r["ts"], r["value"]] for r in rows]
+            if points:
+                return {
+                    "metric": metric,
+                    "source": "raw",
+                    "count": len(points),
+                    "points": downsample(points),
+                }
+        if span <= HOURLY_MAX_SPAN_S:
+            rows = await _aggregate_series(
+                db, "metric_hourly", "hour", metric, None, (from_ // 3600) * 3600, to, model
+            )
+            points = [[r["hour"] + 1800, r["avg"]] for r in rows if r["avg"] is not None]
+            return {
+                "metric": metric,
+                "source": "hourly" if points else None,
+                "count": len(points),
+                "points": downsample(points),
+            }
+        rows = await _aggregate_series(
+            db, "metric_daily", "day", metric, None, (from_ // 86400) * 86400, to, model
         )
-        points = [[r["ts"], r["value"]] for r in rows]
+        points = [[r["day"] + 43200, r["avg"]] for r in rows if r["avg"] is not None]
+        source = "daily"
+        if not points:
+            rows = await _aggregate_series(
+                db, "metric_hourly", "hour", metric, None, (from_ // 3600) * 3600, to, model
+            )
+            points = [[r["hour"] + 1800, r["avg"]] for r in rows if r["avg"] is not None]
+            source = "hourly"
         return {
             "metric": metric,
-            "source": "raw" if points else None,
+            "source": source if points else None,
             "count": len(points),
             "points": downsample(points),
         }

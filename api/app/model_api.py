@@ -129,13 +129,17 @@ async def _raw_points(
     return [r["value"] for r in rows if r["value"] is not None]
 
 
-async def _hourly_stats(db, metric: str, from_: int, to: int, column: str) -> float | None:
+async def _hourly_stats(
+    db, metric: str, from_: int, to: int, column: str, model: str | None = None
+) -> float | None:
     """Взвешенное (по count) среднее колонки hourly-агрегата за период."""
+    mcond = " AND model = ?" if model is not None else ""
+    params: tuple = (metric, (from_ // 3600) * 3600, to, *( (model,) if model is not None else () ))
     rows = rows_to_dicts(
         await db.execute_fetchall(
             f"SELECT SUM({column} * count) AS sm, SUM(count) AS c "
-            f"FROM metric_hourly WHERE metric = ? AND hour >= ? AND hour < ?",
-            (metric, (from_ // 3600) * 3600, to),
+            f"FROM metric_hourly WHERE metric = ? AND hour >= ? AND hour < ?{mcond}",
+            params,
         )
     )
     r = rows[0]
@@ -172,9 +176,11 @@ async def build_model_response(
 ) -> dict[str, Any]:
     """Сборка ответа GET /api/model за период [from, to].
 
-    ``model`` (F4.4): фильтр по метке модели — только сырые данные
-    (hourly/daily метки модели не имеют; глубина = ретенция raw 168ч),
-    raw-расчёт применяется к любому периоду.
+    ``model`` (F4.4): фильтр по метке модели. Период ≤24ч — сырые данные;
+    >24ч — rates/квантили из ``metric_hourly`` (с 0004 агрегаты несут
+    model). Счётчики (finish reasons, distributions, prefix, preemptions)
+    и «последние значения» (running/waiting/kv) — только сырые: при
+    filterе и периоде, выходящем за raw-ретенцию (168ч), могут быть null.
     """
     resp = _empty_response()
     if from_ < 0 or to <= from_:
@@ -218,7 +224,7 @@ async def build_model_response(
     kpi["kv_cache"] = await last_value("kv_cache_usage")
 
     span = to - from_
-    if span <= RAW_SPAN_S or model is not None:
+    if span <= RAW_SPAN_S:
         # --- средние rates по сырым точкам
         for key, metric in (
             ("prompt_rate", "prompt_tokens_rate"),
@@ -237,13 +243,13 @@ async def build_model_response(
         kpi["e2e_p95"] = quantile_sorted(e2e_pts, 0.95)
     else:
         # --- период >24ч: hourly (avg-колонка для p50/rates, p95-колонка для p95)
-        kpi["prompt_rate"] = await _hourly_stats(db, "prompt_tokens_rate", from_, to, "avg")
-        kpi["gen_rate"] = await _hourly_stats(db, "generation_tokens_rate", from_, to, "avg")
-        kpi["ttft_p50"] = await _hourly_stats(db, "ttft_p50", from_, to, "avg")
-        kpi["tpot_p50"] = await _hourly_stats(db, "tpot_p50", from_, to, "avg")
-        kpi["ttft_p95"] = await _hourly_stats(db, "ttft_p95", from_, to, "p95")
-        kpi["tpot_p95"] = await _hourly_stats(db, "tpot_p95", from_, to, "p95")
-        kpi["e2e_p95"] = await _hourly_stats(db, "e2e_latency_p95", from_, to, "p95")
+        kpi["prompt_rate"] = await _hourly_stats(db, "prompt_tokens_rate", from_, to, "avg", model)
+        kpi["gen_rate"] = await _hourly_stats(db, "generation_tokens_rate", from_, to, "avg", model)
+        kpi["ttft_p50"] = await _hourly_stats(db, "ttft_p50", from_, to, "avg", model)
+        kpi["tpot_p50"] = await _hourly_stats(db, "tpot_p50", from_, to, "avg", model)
+        kpi["ttft_p95"] = await _hourly_stats(db, "ttft_p95", from_, to, "p95", model)
+        kpi["tpot_p95"] = await _hourly_stats(db, "tpot_p95", from_, to, "p95", model)
+        kpi["e2e_p95"] = await _hourly_stats(db, "e2e_latency_p95", from_, to, "p95", model)
 
     # --- счётчики за период (дифф)
     counters = await _first_last(db, "%", from_, to, model)

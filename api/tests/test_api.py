@@ -416,3 +416,34 @@ def test_live_sse_mixed_sources_offline(live_server, monkeypatch):
     assert p["sources"] == {"vllm": "ok", "gpu": "offline", "system": "offline"}
     assert p["kpi"]["running"] == 1.0
     assert p["gpus"] is None and p["gpu_total"] is None and p["system"] is None
+
+
+def test_metrics_model_filter_hourly(client, db_path):
+    # F4.4: фильтр модели на периоде >24ч — из metric_hourly (не только raw 168ч)
+    c = _conn(db_path)
+    for i in range(24 * 7):
+        c.execute(
+            "INSERT INTO metric_hourly (metric, hour, model, avg, min, max, p95, count) "
+            "VALUES ('m', ?, 'model-a', ?, 0, 1, 1, 12)",
+            (NOW - 7 * 86400 + i * 3600, 0.5),
+        )
+        c.execute(
+            "INSERT INTO metric_hourly (metric, hour, model, avg, min, max, p95, count) "
+            "VALUES ('m', ?, 'model-b', ?, 0, 1, 1, 12)",
+            (NOW - 7 * 86400 + i * 3600, 9.0),
+        )
+    c.commit()
+    c.close()
+    body = client.get(
+        "/api/metrics/m",
+        params={"from": NOW - 7 * 86400, "to": NOW, "model": "model-a"},
+    ).json()
+    assert body["source"] == "hourly"
+    assert body["count"] == 24 * 7
+    assert all(p[1] == 0.5 for p in body["points"])
+    # чужая модель — не попадает
+    body_b = client.get(
+        "/api/metrics/m",
+        params={"from": NOW - 7 * 86400, "to": NOW, "model": "model-b"},
+    ).json()
+    assert all(p[1] == 9.0 for p in body_b["points"])

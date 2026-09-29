@@ -178,3 +178,29 @@ async def test_tokens_idempotent(agg, db):
     await agg._aggregate_tokens(NOW)
     assert await agg._aggregate_tokens(NOW) == 0
     assert len(await db.execute_fetchall("SELECT * FROM tokens")) == 1
+
+
+async def test_hourly_per_model(agg, db):
+    # vllm-метрики — отдельная строка на (metric, hour, model); смена модели
+    # внутри часа — две строки (F4.4 без 168ч-лимита)
+    rows = []
+    for i in range(10):
+        rows.append(("ttft_p50", HOUR + i * 60, 1.0 + i, "vllm", None, "model-a"))
+        rows.append(("ttft_p50", HOUR + 1800 + i * 60, 5.0, "vllm", None, "model-b"))
+        rows.append(("cpu_usage", HOUR + i * 60, 10.0, "system", None, None))
+    await seed_samples_aio(db, rows)
+    assert await agg._aggregate_hourly(NOW) == 3  # ttft×2 модели + cpu
+    got = {
+        dict(r)["model"]: dict(r)
+        for r in await db.execute_fetchall(
+            "SELECT * FROM metric_hourly WHERE hour=? AND metric='ttft_p50'", (HOUR,)
+        )
+    }
+    assert set(got) == {"model-a", "model-b"}
+    assert got["model-a"]["count"] == 10
+    assert got["model-b"]["count"] == 10
+    # cpu (model=NULL) — одна строка
+    cpu = (await db.execute_fetchall(
+        "SELECT count(*) c FROM metric_hourly WHERE metric='cpu_usage' AND model IS NULL"
+    ))[0]["c"]
+    assert cpu == 1
