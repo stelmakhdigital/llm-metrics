@@ -164,7 +164,7 @@ export function ModelPeriod() {
               to={to as number}
               marks={marks}
               model={model}
-              note="Значение — как хранит коллектор (доля 0..1 или % — уточняется бэком)."
+              tip="Занятость KV-кэша vLLM, % (мемори под ключи/значения attention). Высокая близкая к 100% — новые запросы могут не помещаться и вытеснять старые (премпты)."
             />
             <MetricChart
               title="Запросы: running / waiting"
