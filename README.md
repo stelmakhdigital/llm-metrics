@@ -1,5 +1,7 @@
 # llm-metrics — веб-мониторинг vLLM-сервера
 
+![Скриншот](docs/screenshot.png)
+
 Панель мониторинга vLLM-инференса: загрузка GPU, латентность (TTFT/TPOT/ITL/E2E),
 throughput, KV-кэш, стоимость (токены + электричество), логи vLLM и алерты
 (в т.ч. в Telegram).
