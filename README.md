@@ -49,6 +49,37 @@ curl -s http://127.0.0.1:3000/api/health
 Dev (без docker): `make dev-api` (uvicorn :8100) + `make dev-web` (:3000),
 мок vLLM — `make mock-vllm`. Тесты: `make test-api`; web — `cd web && npm run build`.
 
+## Автозапуск при старте сервера
+
+* **api + web** — в compose уже `restart: unless-stopped`: при включении сервера
+  контейнеры поднимутся сами (нужен только включённый сервис docker —
+  `systemctl enable docker`, по умолчанию включён).
+* **vLLM (хост-скрипт)** — systemd-юнит над обёрткой `scripts/vllm-host.sh`
+  (env из `.env` — `VLLM_SCRIPT`, `VLLM_LOG_DIR`):
+
+```ini
+# /etc/systemd/system/llm-vllm.service
+[Unit]
+Description=llm-metrics: vLLM host server
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=/path/to/llm-metrics/.env
+ExecStart=/path/to/llm-metrics/scripts/vllm-host.sh start
+ExecStop=/path/to/llm-metrics/scripts/vllm-host.sh stop
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload && sudo systemctl enable --now llm-vllm
+# проверка: systemctl status llm-vllm, make vllm-status
+```
+
 ## Архитектура (кратко)
 
 * **vLLM — процесс на хосте** (`--host 0.0.0.0:8000`, свой скрипт, пример —
