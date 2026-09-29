@@ -188,8 +188,10 @@ class AlertEngine:
         cmp = (lambda v: v > rule.value) if rule.op == ">" else (lambda v: v < rule.value)
         if not cmp(last_val):
             return False, ""
+        # issue #6: «длится for_s» — устойчивое нарушение, а не единичный
+        # всплеск: ≥50% точек окна for_s + свежая точка в последних 120 с
+        window_violation = sum(cmp(r["value"]) for r in rows) >= len(rows) / 2
         recent_violation = any(cmp(r["value"]) for r in rows if r["ts"] >= now - RECENT_S)
-        window_violation = any(cmp(r["value"]) for r in rows)
         return (recent_violation and window_violation), f"{rule.metric}={last_val:g}"
 
     def _source_condition(self, rule: Rule, now: int) -> tuple[bool, str]:

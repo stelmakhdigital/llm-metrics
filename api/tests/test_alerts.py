@@ -82,6 +82,24 @@ async def test_condition_true_and_fresh(db, clock):
     assert detail == f"{KV}=97"
 
 
+async def test_condition_single_spike_does_not_alert(db, clock):
+    """issue #6: единичный всплеск (1 полл из окна for_s=300) не алертит;
+    устойчивое нарушение (все поллы ≥ for_s) — алертит."""
+    st = SourceRegistry(("vllm", "gpu", "system"))
+    eng = make_engine(db, st, FakeHttp())
+    now = int(clock())
+    # 20 поллов по 15 с (окно 300 с), только последний — нарушение
+    pts = [(now - 300 + 15 * i, 10.0) for i in range(19)] + [(now - 10, 97.0)]
+    await insert_kv(db, pts)
+    cond, _ = await eng._condition(kv_rule(), now)
+    assert cond is False  # 1/20 < 50%
+
+    # устойчивое: большинство поллов окна — нарушение (свежее включено)
+    await insert_kv(db, [(now - 300 + 15 * i, 95.0) for i in range(1, 19)])
+    cond, _ = await eng._condition(kv_rule(), now)
+    assert cond is True  # 20/21 > 50% + свежее (now-10, 97)
+
+
 async def test_condition_no_data_and_stale(db, clock):
     st = SourceRegistry(("vllm", "gpu", "system"))
     eng = make_engine(db, st, FakeHttp())
