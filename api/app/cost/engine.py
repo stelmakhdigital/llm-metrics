@@ -321,9 +321,11 @@ async def compute_cost(db, from_s: int, to_s: int) -> dict:
         dd = days[d]
         if dd["total"] <= 0 and dd["kwh"] <= 0:
             continue
-        # Завершённые дни — средняя по полным суткам (к платёжке); текущий
-        # (незавершённый) день — по покрытым секундам (единственная честная)
-        denom = DAY_S if d < (to_s // DAY_S) * DAY_S else dd["covered_s"]
+        # «К платёжке»: полный день внутри периода (и from, и to вне него)
+        # — знаменатель 86400; краевые/текущие (частичные) — по покрытым
+        # секундам (issue #4: первый день query now-30d…now всегда частичный)
+        day_full = (from_s <= d) and (d + DAY_S <= to_s)
+        denom = DAY_S if day_full else dd["covered_s"]
         by_day.append(
             {
                 "day": d,

@@ -68,10 +68,29 @@ def test_electricity_raw_1h(client, db_path):
 
 
 def test_electricity_daily_avg_completed_day(client, db_path):
-    """Завершённый день (то_s после него): avg_power_w — по полным суткам
-    (1ч 500 Вт данных → 500*3600/86400 ≈ 20.8 Вт, а не 500)."""
+    """Полный день внутри периода (from == начало дня): avg_power_w — по
+    полным суткам (1ч 500 Вт данных → 500*3600/86400 ≈ 20.8 Вт, не 500)."""
     D = (T // 86_400) * 86_400
     h0 = D - 86_400 + 3_600  # 1-й час «вчерашнего» дня
+    seed_samples(
+        db_path,
+        [("gpu_power", h0 + 300 * i, 300.0, "gpu", 0, None) for i in range(13)],
+    )
+    body = client.get(
+        "/api/cost", params={"from": D - 86_400, "to": D + 3_600}
+    ).json()
+    assert len(body["by_day"]) == 1
+    assert body["by_day"][0]["day"] == D - 86_400
+    assert body["by_day"][0]["avg_power_w"] == pytest.approx(
+        500 * 3600 / 86_400, rel=0.01
+    )
+
+
+def test_electricity_daily_avg_partial_first_day(client, db_path):
+    """issue #4: первый день периода, частичный (from внутри суток), —
+    avg_power_w по покрытым секундам (500 Вт), а не по 86400."""
+    D = (T // 86_400) * 86_400
+    h0 = D - 86_400 + 3_600  # 01:00 «вчерашнего» дня — внутри суток
     seed_samples(
         db_path,
         [("gpu_power", h0 + 300 * i, 300.0, "gpu", 0, None) for i in range(13)],
@@ -79,9 +98,7 @@ def test_electricity_daily_avg_completed_day(client, db_path):
     body = client.get("/api/cost", params={"from": h0, "to": D + 3_600}).json()
     assert len(body["by_day"]) == 1
     assert body["by_day"][0]["day"] == D - 86_400
-    assert body["by_day"][0]["avg_power_w"] == pytest.approx(
-        500 * 3600 / 86_400, rel=0.01
-    )
+    assert body["by_day"][0]["avg_power_w"] == pytest.approx(500.0, **APPROX)
 
 
 def test_electricity_daily_avg_current_day(client, db_path):
