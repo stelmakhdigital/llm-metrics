@@ -23,12 +23,13 @@ import { RatesForm } from "./rates-form";
 
 const DAY_S = 86_400;
 
-/** Точки [ts, v] из суточных значений: null/0 — разрыв (пропуски не рисуются как 0). */
+/** Точки [ts, v] из суточных значений: null — разрыв; 0 рисуется как 0
+ * (день с нулевыми токенами — не «нет данных»). */
 function dayPoints(
   days: CostDayPoint[],
   key: "tokens" | "electricity" | "total" | "kwh" | "avg_power_w",
 ): [number, number | null][] {
-  return days.map((d) => [d.day, d[key] === 0 ? null : d[key]]);
+  return days.map((d) => [d.day, d[key]]);
 }
 
 /**
