@@ -100,6 +100,42 @@ async def test_condition_single_spike_does_not_alert(db, clock):
     assert cond is True  # 20/21 > 50% + свежее (now-10, 97)
 
 
+async def test_condition_per_gpu_metric_any_gpu(db, clock):
+    """Пер-GPU метрика: устойчивое нарушение на 1 из 5 GPU алертит.
+    До сводки MAX по ts это было 1/5 = 20% точек окна < 50% — никогда.
+    """
+    st = SourceRegistry(("vllm", "gpu", "system"))
+    eng = make_engine(db, st, FakeHttp())
+    now = int(clock())
+    rule = Rule(
+        id="throttle_test", title="тест", metric="gpu_throttle_reasons",
+        op=">", value=0, for_s=300, cooldown_s=0,
+    )
+    # 20 поллов (шаг 15 с, окно 300 с) × 5 GPU: только GPU0 — нарушение
+    rows = []
+    for i in range(20):
+        ts = now - 300 + 15 * i
+        for g in range(5):
+            rows.append(("gpu_throttle_reasons", ts, 4.0 if g == 0 else 0.0, "gpu", g, None))
+    await db.executemany(
+        "INSERT INTO metric_samples (metric, ts, value, source, gpu, model) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    await db.commit()
+    cond, detail = await eng._condition(rule, now)
+    assert cond is True  # MAX по ts: 20/20 = 100% > 50% + свежая точка
+    assert "gpu_throttle_reasons=4" in detail
+
+    # нет нарушений нигде — не алертит (MAX по ts = 0)
+    rule_off = Rule(
+        id="temp_test", title="тест", metric="gpu_temp", op="<", value=-100,
+        for_s=300, cooldown_s=0,
+    )
+    cond_off, _ = await eng._condition(rule_off, now)
+    assert cond_off is False
+
+
 async def test_condition_no_data_and_stale(db, clock):
     st = SourceRegistry(("vllm", "gpu", "system"))
     eng = make_engine(db, st, FakeHttp())

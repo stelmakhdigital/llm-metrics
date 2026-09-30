@@ -176,8 +176,15 @@ class AlertEngine:
         if not rule.metric or rule.op is None or rule.value is None:
             return False, ""
         window = max(rule.for_s, RECENT_S)
+        # Пер-GPU метрики (gpu_throttle_reasons и т.п.): худшее значение на
+        # timestamp (MAX для ">", MIN для "<" — «нарушение на любой GPU»). Без
+        # сводки устойчивое нарушение на 1 из N GPU = 1/N точек окна и никогда
+        # не дотягивает до порога ≥50% (не-GPU-метрики: 1 строка на ts — сводка
+        # не меняет значения).
+        agg = "MAX(value)" if rule.op == ">" else "MIN(value)"
         rows = await self.db.execute_fetchall(
-            "SELECT ts, value FROM metric_samples WHERE metric = ? AND ts >= ? AND ts <= ? ORDER BY ts",
+            f"SELECT ts, {agg} AS value FROM metric_samples "
+            "WHERE metric = ? AND ts >= ? AND ts <= ? GROUP BY ts ORDER BY ts",
             (rule.metric, now - window, now),
         )
         if not rows:
