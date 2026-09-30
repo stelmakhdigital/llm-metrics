@@ -16,7 +16,8 @@ export interface UPlotChartProps {
   height?: number;
   /** live-режим: окно за последние ~5 минут, без выбора/перетаскивания */
   live?: boolean;
-  /** stacked: серии складываются (y.min фиксируется в 0) */
+  /** stacked: серии рисуются областями от 0 (у uPlot нет нативного stack —
+      серии перекрываются, fill до нуля) */
   stack?: boolean;
 }
 
@@ -60,7 +61,9 @@ export default function UPlotChart({ series, height = 220, live = false, stack =
           label: s.name,
           stroke: s.color,
           width: 1.5,
-          ...(stack ? { stack: true, fill: "origin" } : {}),
+          // min: 0 на y ломает авто-range в uPlot 1.6 (max остаётся null —
+          // график пустой), поэтому низ не фиксируем: авто-range и так уходит в 0
+          ...(stack ? { fill: "origin" } : {}),
         })),
       ],
       scales: {
@@ -71,7 +74,7 @@ export default function UPlotChart({ series, height = 220, live = false, stack =
             ? { auto: false, min: xs[xs.length - 1] - 300, max: xs[xs.length - 1] }
             : { auto: true }),
         },
-        y: { auto: true, ...(stack ? { min: 0 } : {}) },
+        y: { auto: true },
       },
       axes: [
         {
