@@ -23,6 +23,9 @@ node_modules/
 
 # секреты (secrets в docker-compose.yml)
 secrets/
+.env
+.env.*
+!.env.example
 
 # инструментальные артефакты
 .memory/
