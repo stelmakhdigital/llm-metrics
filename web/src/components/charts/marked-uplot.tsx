@@ -65,7 +65,12 @@ export default function MarkedUPlot({ series, height = 220, marks }: MarkedUPlot
       height,
       series: [
         { label: "" },
-        ...series.map((s) => ({ label: s.name, stroke: s.color, width: 1.5 })),
+        ...series.map((s) => ({
+          label: s.name,
+          stroke: s.color,
+          width: 1.5,
+          points: { width: 4 },
+        })),
       ],
       scales: { x: { time: true, auto: true }, y: { auto: true } },
       axes: [
