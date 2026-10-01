@@ -61,9 +61,9 @@ export default function UPlotChart({ series, height = 220, live = false, stack =
           label: s.name,
           stroke: s.color,
           width: 1.5,
-          // у uPlot точки рисуются только при разреженных данных (авто-логика
-          // по расстоянию) — на 1ч/24ч они пропадают; фиксируем размер явно
-          points: { width: 4 },
+          // у uPlot авто-логика прячет точки на плотных рядах (points.space) —
+          // на 1ч/24ч точки пропадали; width — размер, space: 1 — не прятать
+          points: { width: 4, space: 1 },
           // min: 0 на y ломает авто-range в uPlot 1.6 (max остаётся null —
           // график пустой), поэтому низ не фиксируем: авто-range и так уходит в 0
           ...(stack ? { fill: "origin" } : {}),

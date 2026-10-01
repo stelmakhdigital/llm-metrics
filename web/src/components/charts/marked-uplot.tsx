@@ -69,7 +69,7 @@ export default function MarkedUPlot({ series, height = 220, marks }: MarkedUPlot
           label: s.name,
           stroke: s.color,
           width: 1.5,
-          points: { width: 4 },
+          points: { width: 4, space: 1 },
         })),
       ],
       scales: { x: { time: true, auto: true }, y: { auto: true } },
