@@ -33,8 +33,10 @@ const ITL_TPOT_SPECS: MetricSpec[] = [
 
 const E2E_SPECS: MetricSpec[] = [{ metric: "e2e_latency_p95", label: "p95", color: PALETTE[0] }];
 
-const THROUGHPUT_SPECS: MetricSpec[] = [
+const PROMPT_TPUT_SPECS: MetricSpec[] = [
   { metric: "prompt_tokens_rate", label: "prompt tok/s", color: PALETTE[1] },
+];
+const GEN_TPUT_SPECS: MetricSpec[] = [
   { metric: "generation_tokens_rate", label: "generation tok/s", color: PALETTE[0] },
 ];
 
@@ -96,7 +98,7 @@ export function ModelPeriod() {
 
           {model != null && (
             <InfoBanner
-              message={`Фильтр по модели «${model}»: показаны только данные этой модели (≤24ч — сырые, дальше — hourly-агрегаты; счётчики/финиш-причины — в пределах 168 ч).`}
+              message={`Фильтр по модели «${model}»: показаны только данные этой модели (≤24ч — сырые выборки, сглаженные по бакетам; дальше — hourly-агрегаты; счётчики/финиш-причины — в пределах 168 ч).`}
             />
           )}
 
@@ -149,13 +151,22 @@ export function ModelPeriod() {
               tip="Полное время запроса: от поступления до последнего токена, p95. Квантиль из кумулятивного histogram'а vLLM; растёт с длиной генерации."
             />
             <MetricChart
-              title="Throughput, токены/с"
-              specs={THROUGHPUT_SPECS}
+              title="Prompt throughput, токены/с"
+              specs={PROMPT_TPUT_SPECS}
               from={from as number}
               to={to as number}
               marks={marks}
               model={model}
-              tip="Скорость обработки токенов: prompt (вход, включает токены из prefix-кэша — поэтому может быть много выше, чем «Avg prompt throughput» в логах vLLM) и generation (выход)."
+              tip="Скорость обработки входных токенов. Включает токены из prefix-кэша — поэтому может быть много выше, чем «Avg prompt throughput» в логах vLLM."
+            />
+            <MetricChart
+              title="Generation throughput, токены/с"
+              specs={GEN_TPUT_SPECS}
+              from={from as number}
+              to={to as number}
+              marks={marks}
+              model={model}
+              tip="Скорость генерации выходных токенов. Отдельный график: prompt-потоки (тысячи токенов) не задавливают generation на общей оси."
             />
             <MetricChart
               title="KV cache usage"
