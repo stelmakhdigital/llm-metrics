@@ -2,42 +2,44 @@
 
 from __future__ import annotations
 
+import math
+
 __all__ = ["MAX_POINTS", "downsample"]
 
-MAX_POINTS = 1500
+# Цель — ~300 точек: столько же, сколько даёт hourly-агрегат на 7 дней
+# (168 точек) — графики на 1ч/24ч выглядят как на длинных периодах.
+MAX_POINTS = 300
 
 
 def downsample(points: list[list[float]], max_points: int = MAX_POINTS) -> list[list[float]]:
-    """Min-max decimation: из каждого бакета — точка минимума и максимума.
+    """Среднее по временным бакетам: одна точка на бакет.
 
-    * Хранит форму всплесков (не «гладит»);
-    * результат ≤ max_points точек;
-    * первая и последняя точки исходного ряда сохраняются;
-    * порядок времени не нарушается.
+    * Бакеты — по времени (привязка к сетке epoch, не по индексам) —
+      неровная дискретизация не искажается;
+    * ts точки — середина бакета (конвенция как у hourly: ``hour + 1800``);
+    * Пустые бакеты (разрывы в данных) пропускаются — разрыв остаётся разрывом;
+    * результат ≤ max_points точек, порядок времени не нарушается.
     """
     n = len(points)
     if n <= max_points:
         return points
-    # бакетов = max_points//2 → до 2 точек (ло/хай) на бакет → ≤ ~max_points
-    buckets = max(1, max_points // 2)
-    size = (n + buckets - 1) // buckets
-
-    def push(out: list, p) -> None:
-        if not out or out[-1] is not p:
-            out.append(p)
-
-    out: list[list[float]] = [points[0]]
-    for i in range(buckets):
-        chunk = points[i * size : min(n, (i + 1) * size)]
-        if not chunk:
-            continue
-        lo = min(chunk, key=lambda p: p[1])
-        hi = max(chunk, key=lambda p: p[1])
-        if lo is hi:
-            push(out, lo)
+    span = int(points[-1][0] - points[0][0])
+    # (span // size) + 1 ≤ max_points: ширина с запасом на крайний бакет
+    size = max(1, math.ceil(span / (max_points - 1))) if max_points > 1 else 1
+    # бакет → [count, sum]; order — порядок появления (ts сортированы)
+    acc: dict[int, list[float]] = {}
+    order: list[int] = []
+    for ts, v in points:
+        b = int(ts) // size
+        a = acc.get(b)
+        if a is None:
+            acc[b] = [1.0, float(v)]
+            order.append(b)
         else:
-            first, second = (lo, hi) if lo[0] <= hi[0] else (hi, lo)
-            push(out, first)
-            push(out, second)
-    push(out, points[-1])
+            a[0] += 1
+            a[1] += float(v)
+    out: list[list[float]] = []
+    for b in order:
+        c, s = acc[b]
+        out.append([b * size + size / 2, s / c])
     return out

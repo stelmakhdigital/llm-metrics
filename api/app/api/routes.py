@@ -368,7 +368,8 @@ async def metric_series(
     * больше (месяц и шире) — ``metric_daily`` (avg по суткам, точка в
       середине суток); при пустом daily — fallback на hourly.
 
-    Результат даунсемплируется до ≤1500 точек (min-max decimation).
+    Результат даунсемплируется до ≤300 точек (среднее по временным бакетам,
+    как у hourly-агрегата) — короткие периоды выглядят как длинные.
     """
     now = int(time.time())
     to = to if to is not None else now
