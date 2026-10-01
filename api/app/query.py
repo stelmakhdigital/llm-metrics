@@ -6,9 +6,9 @@ import math
 
 __all__ = ["MAX_POINTS", "downsample"]
 
-# Цель — ~300 точек: столько же, сколько даёт hourly-агрегат на 7 дней
-# (168 точек) — графики на 1ч/24ч выглядят как на длинных периодах.
-MAX_POINTS = 300
+# Цель — ~200 точек: как у hourly-агрегата на 7 дней (168 точек) —
+# графики на 1ч/24ч выглядят как на длинных периодах, точки не слипаются.
+MAX_POINTS = 200
 
 
 def downsample(points: list[list[float]], max_points: int = MAX_POINTS) -> list[list[float]]:
