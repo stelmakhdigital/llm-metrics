@@ -4,8 +4,8 @@ PY       := $(VENV)/bin/python
 # docker compose (v2) если есть, иначе docker-compose (v1); переопределяется: make COMPOSE=...
 COMPOSE  ?= $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo docker-compose)
 MOCK_F   := -f docker-compose.yml -f docker-compose.mock.yml
-# версия для build-arg (тег git; без тега — short hash; грязное дерево — -dirty)
-VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+# версия для build-arg (тег git без префикса v; без тега — short hash; грязное дерево — -dirty)
+VERSION  ?= $(shell v=$$(git describe --tags --always --dirty 2>/dev/null | sed 's/^v//'); echo $${v:-dev})
 
 # Пути обёртки vLLM на хосте — из .env (пример: .env.example)
 VLLM_SCRIPT  ?= $(HOME)/bin/work-fp8.sh
@@ -133,7 +133,7 @@ ps:
 # Релиз-тег: make tag V=0.2.0 — создаёт тег v0.2.0 (annotated) и пушит.
 # Тег = единица деплоя: на сервере git checkout <тег> + make rebuild.
 tag:
-	@test -n $(V) || { echo "usage: make tag V=<версия>, напр. make tag V=0.2.0"; exit 1; }
+	@test -n "$(strip $(V))" || { echo "usage: make tag V=<версия>, напр. make tag V=0.2.0"; exit 1; }
 	git tag -a v$(V) -m "release v$(V)"
 	git push origin v$(V)
 	@echo "тег v$(V) создан и запушен; сборка будет показывать версию v$(V)"
