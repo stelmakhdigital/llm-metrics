@@ -12,6 +12,9 @@ ENV API_URL=$API_URL
 COPY . .
 ARG NEXT_PUBLIC_API_URL=""
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+# версия (git describe --tags) — прокидывается из Makefile/compose
+ARG APP_VERSION=dev
+ENV NEXT_PUBLIC_APP_VERSION=$APP_VERSION
 RUN npm run build
 
 # --- runtime stage ---

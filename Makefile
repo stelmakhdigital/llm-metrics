@@ -4,6 +4,8 @@ PY       := $(VENV)/bin/python
 # docker compose (v2) если есть, иначе docker-compose (v1); переопределяется: make COMPOSE=...
 COMPOSE  ?= $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo docker-compose)
 MOCK_F   := -f docker-compose.yml -f docker-compose.mock.yml
+# версия для build-arg (тег git; без тега — short hash; грязное дерево — -dirty)
+VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 # Пути обёртки vLLM на хосте — из .env (пример: .env.example)
 VLLM_SCRIPT  ?= $(HOME)/bin/work-fp8.sh
@@ -11,7 +13,7 @@ VLLM_LOG_DIR ?= /mnt/storage/vllm
 -include .env
 
 .PHONY: setup dev-api dev-web mock-vllm test-api alembic
-.PHONY: start down rebuild logs ps mock-start mock-down build build-bg install install-toolkit gpu-check all
+.PHONY: start down rebuild logs ps mock-start mock-down build build-bg install install-toolkit gpu-check all tag
 .PHONY: vllm-start vllm-stop vllm-status vllm-logs install-logrotate
 
 # venv + зависимости API
@@ -69,12 +71,12 @@ all: install-toolkit up
 
 # Пересобрать все образы (api + web; сборка быстрая).
 build:
-	$(COMPOSE) build
+	APP_VERSION=$(VERSION) $(COMPOSE) build
 
 # Тот же build, но в фоне (переживает обрыв ssh); прогресс: tail -f build.log.
 # Если сборка упала: grep -nE "error:|Error|Killed|status 137" build.log | tail
 build-bg:
-	nohup $(COMPOSE) build --progress=plain >build.log 2>&1 &
+	nohup sh -c 'APP_VERSION=$(VERSION) $(COMPOSE) build --progress=plain' >build.log 2>&1 &
 	echo "build в фоне (PID $$!); следите: tail -f build.log"
 
 # Полный первичный деплой на новом сервере: .env + secrets + toolkit + образы + запуск.
@@ -128,9 +130,17 @@ install-logrotate:
 ps:
 	$(COMPOSE) ps
 
+# Релиз-тег: make tag V=0.2.0 — создаёт тег v0.2.0 (annotated) и пушит.
+# Тег = единица деплоя: на сервере git checkout <тег> + make rebuild.
+tag:
+	@test -n $(V) || { echo "usage: make tag V=<версия>, напр. make tag V=0.2.0"; exit 1; }
+	git tag -a v$(V) -m "release v$(V)"
+	git push origin v$(V)
+	@echo "тег v$(V) создан и запушен; сборка будет показывать версию v$(V)"
+
 # Стек с мок-вLLM вместо реального (не занимает GPU; usage: make mock-down)
 mock-start:
-	$(COMPOSE) $(MOCK_F) up -d --build api web vllm-mock
+	APP_VERSION=$(VERSION) $(COMPOSE) $(MOCK_F) up -d --build api web vllm-mock
 
 mock-down:
 	$(COMPOSE) $(MOCK_F) down

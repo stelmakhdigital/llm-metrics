@@ -31,7 +31,10 @@ secrets:
 services:
   # ------------------------------------------------------------------ api
   api:
-    build: ./api
+    build:
+      context: ./api
+      args:
+        APP_VERSION: ${APP_VERSION:-dev}
     image: llm-metrics-api:latest
     container_name: llm-metrics-api
     # весь конфиг api — через env из .env (пример: .env.example):
@@ -72,6 +75,8 @@ services:
       args:
         # rewrite /api/* → apiUrl вычисляется на этапе next build
         API_URL: http://api:8100
+        # версия (git describe --tags) — Makefile передаёт APP_VERSION
+        APP_VERSION: ${APP_VERSION:-dev}
     image: llm-metrics-web:latest
     container_name: llm-metrics-web
     depends_on:

@@ -55,8 +55,16 @@ export function Sidebar() {
           <NavItem key={item.href} {...item} />
         ))}
       </nav>
-      <div className="mt-auto flex flex-col gap-1">
+      <div className="mt-auto flex flex-col items-center gap-1">
         <NavItem href="/settings" label="Настройки" icon={Settings} />
+        {process.env.NEXT_PUBLIC_APP_VERSION && (
+          <span
+            title={`версия ${process.env.NEXT_PUBLIC_APP_VERSION}`}
+            className="select-none text-[10px] leading-none text-muted/70 tabular-nums"
+          >
+            v{process.env.NEXT_PUBLIC_APP_VERSION}
+          </span>
+        )}
       </div>
     </aside>
   );
