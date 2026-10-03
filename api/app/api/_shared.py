@@ -1,0 +1,239 @@
+"""Общие хелперы REST-роутов: доступ к БД, последние выборки, снимок GPU.
+
+Перенесено из routes.py (разбивка роутов по доменам; логика без изменений).
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from typing import Any
+
+from fastapi import Request
+
+from ..collectors.gpu import GpuCollector, THROTTLE_REASON_NAMES
+from ..storage.db import rows_to_dicts
+
+log = logging.getLogger(__name__)
+
+SNAPSHOT_METRICS = (
+    "gpu_power",
+    "gpu_util",
+    "gpu_mem_used_mib",
+    "gpu_mem_total_mib",
+    "gpu_temp",
+    "gpu_clock_sm",
+    "gpu_clock_mem",
+    "gpu_throttle_reasons",
+    "gpu_ecc_correctable",
+    "gpu_ecc_uncorrectable",
+    "num_requests_running",
+    "num_requests_waiting",
+    "kv_cache_usage",
+    "cpu_usage",
+    "cpu_steal_pct",
+    "cpu_freq_mhz",
+    "load_avg_1",
+    "load_avg_5",
+    "load_avg_15",
+    "ram_total_mb",
+    "ram_used_mb",
+    "ram_available_mb",
+    "swap_used_mb",
+    "disk_read_mb_s",
+    "disk_write_mb_s",
+    "net_rx_mbps",
+    "net_tx_mbps",
+)
+
+
+def _db(request: Request):
+    return request.app.state.db
+
+
+async def last_values(
+    request: Request, metrics: tuple[str, ...]
+) -> dict[tuple[str, int | None], tuple[int, float]]:
+    """Последние (ts, value) по метрикам; gpu-метрики — по каждой gpu."""
+    db = _db(request)
+    ph = ",".join("?" * len(metrics))
+    rows = rows_to_dicts(
+        await db.execute_fetchall(
+            f"""SELECT s.metric, s.gpu, s.ts, s.value
+                FROM metric_samples s
+                JOIN (SELECT metric, COALESCE(gpu, -1) AS g, MAX(ts) AS mt
+                      FROM metric_samples WHERE metric IN ({ph})
+                      GROUP BY metric, COALESCE(gpu, -1)) m
+                ON s.metric = m.metric AND COALESCE(s.gpu, -1) = m.g AND s.ts = m.mt""",
+            list(metrics),
+        )
+    )
+    out: dict[tuple[str, int | None], tuple[int, float]] = {}
+    for r in rows:
+        gpu = None if r["gpu"] == -1 else r["gpu"]
+        out[(r["metric"], gpu)] = (r["ts"], r["value"])
+    return out
+
+
+def v_(last, key: tuple[str, int | None]) -> Any:
+    e = last.get(key)
+    return e[1] if e else None
+
+
+def ts_(last, metric: str, gid: int | None) -> Any:
+    e = last.get((metric, gid))
+    return e[0] if e else None
+
+
+async def _aggregate_series(
+    db,
+    table: str,
+    col: str,
+    metric: str,
+    gpu: int | None,
+    start: int,
+    to: int,
+    model: str | None = None,
+) -> list[dict[str, Any]]:
+    """Строки (col, avg) из metric_hourly/metric_daily.
+
+    ``gpu`` задан — только эта gpu; иначе — AVG по строкам gpu за окно
+    (для не-GPU-метрик одна строка с gpu=NULL — как раньше).
+    ``model`` задан — только строки этой модели."""
+    mcond = " AND model = ?" if model is not None else ""
+    if gpu is not None:
+        sql = (
+            f"SELECT {col}, avg FROM {table} "
+            f"WHERE metric = ? AND gpu = ?{mcond} AND {col} >= ? AND {col} < ? ORDER BY {col}"
+        )
+        params: tuple = (metric, gpu, *( (model,) if model is not None else () ), start, to)
+    else:
+        sql = (
+            f"SELECT {col}, AVG(avg) AS avg FROM {table} "
+            f"WHERE metric = ?{mcond} AND {col} >= ? AND {col} < ? "
+            f"GROUP BY {col} ORDER BY {col}"
+        )
+        params = (metric, *( (model,) if model is not None else () ), start, to)
+    return rows_to_dicts(await db.execute_fetchall(sql, params))
+
+
+async def _latest_model(request: Request) -> str | None:
+    rows = rows_to_dicts(
+        await _db(request).execute_fetchall(
+            """SELECT model FROM metric_samples
+               WHERE source = 'vllm' AND model IS NOT NULL
+               ORDER BY ts DESC LIMIT 1"""
+        )
+    )
+    return rows[0]["model"] if rows else None
+
+
+async def _gpu_snapshot(request: Request, live: bool = False) -> list[dict[str, Any]]:
+    """Снимок всех GPU: последняя выборка каждой метрики (или живое NVML)."""
+    devs = rows_to_dicts(
+        await _db(request).execute_fetchall(
+            "SELECT id, name, total_mem_mib, pci_bus FROM gpu_devices ORDER BY id"
+        )
+    )
+    if live:
+        collector: GpuCollector | None = getattr(request.app.state, "gpu_collector", None)
+        if collector is not None:
+            try:
+                samples, dev_rows = await collector.poll()
+                by_gpu: dict[int, dict[str, Any]] = {r["id"]: {} for r in dev_rows}
+                for s in samples:
+                    if s.gpu is not None and s.gpu in by_gpu:
+                        by_gpu[s.gpu][s.metric] = s.value
+                names = {r["id"]: r for r in dev_rows}
+                return [
+                    {
+                        "id": gid,
+                        "name": names.get(gid, {}).get("name"),
+                        "pci_bus": names.get(gid, {}).get("pci_bus"),
+                        "total_mem_mib": names.get(gid, {}).get("total_mem_mib"),
+                        "power_w": by_gpu[gid].get("gpu_power"),
+                        "util_pct": by_gpu[gid].get("gpu_util"),
+                        "mem_used_mib": by_gpu[gid].get("gpu_mem_used_mib"),
+                        "mem_total_mib": by_gpu[gid].get("gpu_mem_total_mib"),
+                        "temp_c": by_gpu[gid].get("gpu_temp"),
+                        "clock_sm_mhz": by_gpu[gid].get("gpu_clock_sm"),
+                        "clock_mem_mhz": by_gpu[gid].get("gpu_clock_mem"),
+                        "throttle_reasons": by_gpu[gid].get("gpu_throttle_reasons"),
+                        "ecc_correctable": by_gpu[gid].get("gpu_ecc_correctable"),
+                        "ecc_uncorrectable": by_gpu[gid].get("gpu_ecc_uncorrectable"),
+                        "ts": int(time.time()),
+                    }
+                    for gid in sorted(by_gpu)
+                ]
+            except Exception as e:  # live-снимок не удался — даём из БД
+                log.warning("live GPU snapshot failed: %s", e)
+    last = await last_values(request, SNAPSHOT_METRICS)
+    gpus: list[dict[str, Any]] = []
+    for d in devs:
+        gid = d["id"]
+        gpus.append(
+            {
+                "id": gid,
+                "name": d["name"],
+                "pci_bus": d["pci_bus"],
+                "total_mem_mib": d["total_mem_mib"],
+                "power_w": v_(last, ("gpu_power", gid)),
+                "util_pct": v_(last, ("gpu_util", gid)),
+                "mem_used_mib": v_(last, ("gpu_mem_used_mib", gid)),
+                "mem_total_mib": v_(last, ("gpu_mem_total_mib", gid))
+                or d["total_mem_mib"],
+                "temp_c": v_(last, ("gpu_temp", gid)),
+                "clock_sm_mhz": v_(last, ("gpu_clock_sm", gid)),
+                "clock_mem_mhz": v_(last, ("gpu_clock_mem", gid)),
+                "throttle_reasons": v_(last, ("gpu_throttle_reasons", gid)),
+                "ecc_correctable": v_(last, ("gpu_ecc_correctable", gid)),
+                "ecc_uncorrectable": v_(last, ("gpu_ecc_uncorrectable", gid)),
+                "ts": ts_(last, "gpu_power", gid),
+            }
+        )
+    # gpu_devices может быть пуст, если опрос ещё не был успешен,
+    # но выборки уже есть — не потеряем gpu, которых нет в справочнике
+    seen = {g["id"] for g in gpus}
+    for (metric, gid), (ts, val) in last.items():
+        if metric != "gpu_power" or gid is None or gid in seen:
+            continue
+        gpus.append(
+            {
+                "id": gid,
+                "name": None,
+                "pci_bus": None,
+                "total_mem_mib": v_(last, ("gpu_mem_total_mib", gid)),
+                "power_w": val,
+                "util_pct": None,
+                "mem_used_mib": None,
+                "mem_total_mib": None,
+                "temp_c": None,
+                "clock_sm_mhz": None,
+                "clock_mem_mhz": None,
+                "throttle_reasons": None,
+                "ecc_correctable": None,
+                "ecc_uncorrectable": None,
+                "ts": ts,
+            }
+        )
+    gpus.sort(key=lambda g: g["id"])
+    return gpus
+
+
+def src_ok(statuses, name: str) -> bool:
+    return statuses[name].status == "online"
+
+
+def throttle_names(mask: Any) -> list[str]:
+    """NVML-маска троттлинга → имена причин.
+
+    Ключи `THROTTLE_REASON_NAMES` — **значения** битов (1, 2, 4, …, 128);
+    ищем по `mask & bit`, а не по позиции (issue #2)."""
+    if not isinstance(mask, (int, float)) or not mask:
+        return []
+    m = int(mask)
+    return [
+        THROTTLE_REASON_NAMES.get(b, f"bit_{b}")
+        for b in (1, 2, 4, 8, 16, 32, 64, 128)
+        if m & b
+    ]

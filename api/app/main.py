@@ -27,9 +27,12 @@ from .alerts.engine import AlertEngine
 from .alerts.rules import seed_alert_cfg
 from .api.alerts_routes import router as alerts_router
 from .api.cost import router as cost_router
+from .api.live_routes import router as live_router
+from .api.model_routes import router as model_router
 from .api.routes import router
 from .api.logs_routes import router as logs_router
 from .api.settings import router as settings_router
+from .api.system_routes import router as system_router
 from .collectors.base import SourceRegistry, poll_loop, wait_cancelable
 from .collectors.gpu import GpuCollector
 from .collectors.system import SystemCollector
@@ -59,6 +62,9 @@ def create_app(
     app.include_router(settings_router)
     app.include_router(logs_router)
     app.include_router(alerts_router)
+    app.include_router(system_router)
+    app.include_router(model_router)
+    app.include_router(live_router)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

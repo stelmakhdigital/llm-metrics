@@ -59,7 +59,7 @@ def test_health(client):
 def test_throttle_names_decoding():
     """issue #2: ключи THROTTLE_REASON_NAMES — значения битов (1, 2, 4, …);
     bit 0 должен декодироваться, имена — по значению, а не позиции."""
-    from app.api.routes import _throttle_names
+    from app.api._shared import throttle_names as _throttle_names
 
     assert _throttle_names(1) == ["gpu_slowdown"]
     assert _throttle_names(2) == ["sync_boost"]
@@ -292,7 +292,7 @@ def _read_packets(server, n):
 
 def test_live_sse_format_offline(live_server, monkeypatch):
     # pollers не запускались → источники offline, блоки null, но пакет слан
-    from app.api import routes
+    from app.api import live_routes as routes
 
     monkeypatch.setattr(routes, "LIVE_INTERVAL_S", 0.2)
     packets = _read_packets(live_server, 2)
@@ -314,7 +314,7 @@ def test_live_sse_format_offline(live_server, monkeypatch):
 
 def test_live_sse_packet_from_snapshots(live_server, monkeypatch):
     # кэш снимков заполнен + источники online → блоки по контракту
-    from app.api import routes
+    from app.api import live_routes as routes
 
     monkeypatch.setattr(routes, "LIVE_INTERVAL_S", 0.2)
     app = live_server["app"]
@@ -395,7 +395,7 @@ def test_live_sse_packet_from_snapshots(live_server, monkeypatch):
 
 def test_live_sse_prefix_hit_rate_rolling(live_server, monkeypatch):
     # «Холодное» 5-с окно (hits_rate=0): карточка берёт rolling ~60 с из снимка
-    from app.api import routes
+    from app.api import live_routes as routes
 
     monkeypatch.setattr(routes, "LIVE_INTERVAL_S", 0.2)
     app = live_server["app"]
@@ -417,7 +417,7 @@ def test_live_sse_prefix_hit_rate_rolling(live_server, monkeypatch):
 def test_live_sse_token_rates_60s_fallback(live_server, monkeypatch):
     """issue #1: live prompt_rate/gen_rate берут rolling ~60 с из снимка,
     при его отсутствии — 5-с rate, если и его нет — null."""
-    from app.api import routes
+    from app.api import live_routes as routes
 
     monkeypatch.setattr(routes, "LIVE_INTERVAL_S", 0.2)
     app = live_server["app"]
@@ -448,7 +448,7 @@ def test_live_sse_token_rates_60s_fallback(live_server, monkeypatch):
 
 def test_live_sse_mixed_sources_offline(live_server, monkeypatch):
     # vLLM online, GPU/system offline → их блоки null
-    from app.api import routes
+    from app.api import live_routes as routes
 
     monkeypatch.setattr(routes, "LIVE_INTERVAL_S", 0.2)
     app = live_server["app"]
