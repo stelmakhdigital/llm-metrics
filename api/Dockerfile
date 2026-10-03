@@ -36,5 +36,4 @@ EXPOSE 8100
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8100/api/health', timeout=3).status==200 else 1)"
 
-CMD ["sh", "-c", \
-     "METRICS_DB_URL=sqlite:///$SQLITE_PATH alembic upgrade head && \\n      exec uvicorn app.main:app --host 0.0.0.0 --port 8100"]
+CMD ["sh", "-c", "METRICS_DB_URL=sqlite:///$SQLITE_PATH alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8100"]
