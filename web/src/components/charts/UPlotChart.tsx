@@ -39,8 +39,10 @@ export default function UPlotChart({ series, height = 220, live = false, stack =
   const hostRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<uPlot | null>(null);
 
+  // пустые данные (нет точек или все null) — заглушка, а не пустая сетка с осями
+  const hasPoints = series.some((s) => s.points.some(([, v]) => v != null));
   useEffect(() => {
-    if (!hostRef.current || series.length === 0) return;
+    if (!hostRef.current || series.length === 0 || !hasPoints) return;
 
     // общий таймлайн: union всех ts, значения серий — с null на пропусках
     const tsSet = new Set<number>();
@@ -108,7 +110,18 @@ export default function UPlotChart({ series, height = 220, live = false, stack =
       chart.destroy();
       chartRef.current = null;
     };
-  }, [series, height, live, stack]);
+  }, [series, height, live, stack, hasPoints]);
+
+  if (!hasPoints) {
+    return (
+      <div
+        className="flex items-center justify-center rounded-lg border border-line bg-panel2 text-xs text-muted"
+        style={{ height }}
+      >
+        нет данных
+      </div>
+    );
+  }
 
   return (
     <div ref={hostRef} className="w-full" style={{ height }} />

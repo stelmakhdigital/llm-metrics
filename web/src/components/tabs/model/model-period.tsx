@@ -67,6 +67,12 @@ export function ModelPeriod() {
   const rangeOk = from != null && to != null && to > from;
   const url = rangeOk ? modelUrl(from, to, model) : null;
   const { data, loading, error } = usePoll<ModelData>(url, 0);
+  // статус источников — для осмысленного empty-state («vLLM оффлайн», а не просто «нет данных»)
+  const { data: health } = usePoll<{ sources: Record<string, { status: string }> }>(
+    "/api/health",
+    0,
+  );
+  const vllmStatus = health?.sources?.vllm?.status;
 
   if (!rangeOk) {
     return (
@@ -105,7 +111,11 @@ export function ModelPeriod() {
           {kpi != null ? (
             <KpiGrid cards={periodKpiCards(kpi, spanSec)} />
           ) : !error ? (
-            <NoData />
+            vllmStatus && vllmStatus !== "online" ? (
+              <InfoBanner message="Нет данных: источник vLLM оффлайн — метрики модели не собираются." />
+            ) : (
+              <NoData />
+            )
           ) : null}
         </>
       )}
