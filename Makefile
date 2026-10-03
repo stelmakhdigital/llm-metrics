@@ -4,8 +4,8 @@ PY       := $(VENV)/bin/python
 # docker compose (v2) если есть, иначе docker-compose (v1); переопределяется: make COMPOSE=...
 COMPOSE  ?= $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo docker-compose)
 MOCK_F   := -f docker-compose.yml -f docker-compose.mock.yml
-# версия для build-arg (тег git без префикса v; без тега — short hash; грязное дерево — -dirty)
-VERSION  ?= $(shell v=$$(git describe --tags --always --dirty 2>/dev/null | sed 's/^v//'); echo $${v:-dev})
+# версия для build-arg: всегда чистый vN.N.N из тега git (суффиксы -N-g<hash>/-dirty отброшены); без тега — dev
+VERSION  ?= $(shell v=$$(git describe --tags 2>/dev/null | sed 's/^v//; s/-.*//'); echo $${v:-dev})
 
 # Пути обёртки vLLM на хосте — из .env (пример: .env.example)
 VLLM_SCRIPT  ?= $(HOME)/bin/work-fp8.sh
