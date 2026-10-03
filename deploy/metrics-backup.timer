@@ -1,0 +1,9 @@
+[Unit]
+Description=llm-metrics: daily DB backup
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target

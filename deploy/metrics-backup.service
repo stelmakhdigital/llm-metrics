@@ -1,0 +1,11 @@
+[Unit]
+Description=llm-metrics: daily sqlite backup (7 снапшотов в data/backups/)
+
+[Service]
+Type=oneshot
+# + — как root (каталог data/ принадлежит пользователю-владельцу репо)
+ExecStartPre=+mkdir -p __REPO_DIR__/data/backups
+# sqlite3 .backup — консистентный online-снапшот, api не останавливается
+ExecStart=/usr/bin/sqlite3 __REPO_DIR__/data/metrics.db ".backup __REPO_DIR__/data/backups/metrics-%F.db"
+# ротация: оставить 7 самых свежих
+ExecStartPost=/bin/sh -c 'ls -1t __REPO_DIR__/data/backups/metrics-*.db 2>/dev/null | tail -n +8 | xargs -r rm'

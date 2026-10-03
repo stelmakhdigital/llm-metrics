@@ -130,8 +130,8 @@ make vllm-logs                 # хвост лога vLLM (host)
 ## 7. Эксплуатация
 
 ```bash
-# обновление кода
-git pull && make rebuild
+# обновление кода (релиз — по тегу, см. README «Обновление приложения»)
+git fetch --tags && git checkout <тег> && make rebuild
 
 # vLLM на хосте
 make vllm-stop / vllm-start / vllm-status / vllm-logs
@@ -143,10 +143,10 @@ docker compose restart api
 # логи процесса
 docker compose logs -f api
 make vllm-logs                       # лог vLLM (host)
-
-# миграции схемы (обычно не нужны: авто-bootstrap + идемпотентная схема)
-docker compose exec api python -m alembic upgrade head
 ```
+
+Миграции схемы применяются автоматически при старте api-контейнера
+(`alembic upgrade head` в CMD), ручное применение не требуется.
 
 Тарифы (Настройки/Стоимость) и алерты (Алерты) — только через UI:
 хранятся в БД, рестарт не нужен, история пересчитывается на лету.
@@ -154,7 +154,10 @@ docker compose exec api python -m alembic upgrade head
 ## 8. Что где хранится
 
 * `./data/metrics.db` (+ WAL-файлы) — все данные (метрики, токены, логи,
-  настройки, алерты). Бэкап = копия файла (желательно при остановленном api).
+  настройки, алерты). Бэкап — `make install-backup`: systemd-таймер,
+  ежедневно `sqlite3 .backup` (online, api не останавливается) в
+  `./data/backups/metrics-YYYY-MM-DD.db`, ротация 7 снапшотов;
+  восстановление: остановить api, вернуть снапшот на место `metrics.db`.
 * `$VLLM_LOG_DIR/vllm.log` — лог vLLM на хосте (ротация logrotate, 100M×4).
 * `.env` — конфиг (URL, интервалы, ретенция, дефолт тарифов/алертов);
   `secrets/` — Telegram-webhook (не в git).

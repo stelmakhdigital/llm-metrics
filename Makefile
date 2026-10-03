@@ -4,6 +4,8 @@ PY       := $(VENV)/bin/python
 # docker compose (v2) если есть, иначе docker-compose (v1); переопределяется: make COMPOSE=...
 COMPOSE  ?= $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo docker-compose)
 MOCK_F   := -f docker-compose.yml -f docker-compose.mock.yml
+# каталог репо на сервере (для make install-backup; по умолчанию — откуда запущен make)
+REPO_DIR ?= $(CURDIR)
 # версия для build-arg: всегда чистый vN.N.N из тега git (суффиксы -N-g<hash>/-dirty отброшены); без тега — dev
 VERSION  ?= $(shell v=$$(git describe --tags 2>/dev/null | sed 's/^v//; s/-.*//'); echo $${v:-dev})
 
@@ -14,7 +16,7 @@ VLLM_LOG_DIR ?= /mnt/storage/vllm
 
 .PHONY: setup dev-api dev-web mock-vllm test-api alembic
 .PHONY: start down rebuild logs ps mock-start mock-down build build-bg install install-toolkit gpu-check all tag
-.PHONY: vllm-start vllm-stop vllm-status vllm-logs install-logrotate
+.PHONY: vllm-start vllm-stop vllm-status vllm-logs install-logrotate install-backup
 
 # venv + зависимости API
 setup:
@@ -125,6 +127,15 @@ vllm-logs:
 # logrotate хост-лога vLLM (100M×4, copytruncate; путь подставится из .env)
 install-logrotate:
 	@sed "s|/mnt/storage/vllm|$(VLLM_LOG_DIR)|" deploy/logrotate-vllm.conf | sudo tee /etc/logrotate.d/vllm >/dev/null && echo "установлен /etc/logrotate.d/vllm (лог: $(VLLM_LOG_DIR)/vllm.log)"
+
+# Бэкап БД: systemd-таймер, ежедневно, 7 снапшотов в data/backups/.
+# Каталог репо на сервере: REPO_DIR (по умолчанию — откуда запущен make).
+install-backup:
+	@command -v sqlite3 >/dev/null || { echo "нужен sqlite3: sudo apt-get install -y sqlite3"; exit 1; }
+	@sed "s|__REPO_DIR__|$(REPO_DIR)|g" deploy/metrics-backup.service | sudo tee /etc/systemd/system/metrics-backup.service >/dev/null
+	sudo tee /etc/systemd/system/metrics-backup.timer >/dev/null < deploy/metrics-backup.timer
+	sudo systemctl daemon-reload && sudo systemctl enable --now metrics-backup.timer
+	systemctl list-timers metrics-backup.timer --no-legend && echo "бэкап установлен: ежедневно, 7 снапшотов в $(REPO_DIR)/data/backups/"
 
 # Статус контейнеров
 ps:
