@@ -35,9 +35,15 @@ function fmtAxisTime(ts: number, spanS: number): string {
   return `${p(d.getDate())}.${p(d.getMonth() + 1)}`;
 }
 
+/** Значение в тултипе: без хвоста на больших числах. */
+function fmtTipValue(v: number): string {
+  return v.toLocaleString("ru-RU", { maximumFractionDigits: Math.abs(v) >= 100 ? 0 : 2 });
+}
+
 export default function UPlotChart({ series, height = 220, live = false, stack = false }: UPlotChartProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<uPlot | null>(null);
+  const tipRef = useRef<HTMLDivElement>(null);
 
   // пустые данные (нет точек или все null) — заглушка, а не пустая сетка с осями
   const hasPoints = series.some((s) => s.points.some(([, v]) => v != null));
@@ -100,6 +106,44 @@ export default function UPlotChart({ series, height = 220, live = false, stack =
       ],
       cursor: { drag: { x: false, y: false } },
       legend: { show: false },
+      // тултип с значениями при наведении (uPlot 1.6 не умеет values-tooltip
+      // из коробки — обновляем свой бокс по хуку setCursor)
+      hooks: {
+        setCursor: [(u: uPlot) => {
+          const tip = tipRef.current;
+          if (!tip) return;
+          const idx = u.cursor.idx;
+          if (idx == null || idx < 0 || idx >= u.data[0].length) {
+            tip.style.display = "none";
+            return;
+          }
+          const rows = u.series
+            .map((s, i) =>
+              i === 0 ? null : { name: s.label, color: s.stroke, v: u.data[i][idx] },
+            )
+            .filter((r): r is { name: string; color: string; v: number } =>
+              r != null && r.v != null,
+            );
+          if (rows.length === 0) {
+            tip.style.display = "none";
+            return;
+          }
+          const time = new Date(u.data[0][idx] * 1000).toLocaleTimeString("ru-RU");
+          tip.innerHTML =
+            `<div class="mb-0.5 text-muted">${time}</div>` +
+            rows
+              .map(
+                (r) =>
+                  `<div class="flex items-center gap-1.5">` +
+                  `<span class="inline-block h-2 w-2 shrink-0 rounded-full" style="background:${r.color}"></span>` +
+                  `<span class="truncate text-muted">${r.name}</span>` +
+                  `<span class="ml-auto pl-2 tabular-nums">${fmtTipValue(r.v)}</span>` +
+                  `</div>`,
+              )
+              .join("");
+          tip.style.display = "block";
+        }],
+      },
       // отступы: сверху от заголовка и снизу от текста оси X (симметрично)
       padding: [14, 12, 14, 12],
     };
@@ -124,6 +168,12 @@ export default function UPlotChart({ series, height = 220, live = false, stack =
   }
 
   return (
-    <div ref={hostRef} className="w-full" style={{ height }} />
+    <div ref={hostRef} className="relative w-full" style={{ height }}>
+      <div
+        ref={tipRef}
+        style={{ display: "none" }}
+        className="pointer-events-none absolute right-3 top-1 z-10 min-w-[150px] rounded-md border border-line bg-panel2/95 px-2.5 py-1.5 text-[11px] leading-4 shadow-lg"
+      />
+    </div>
   );
 }
