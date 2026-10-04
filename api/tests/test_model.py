@@ -225,6 +225,48 @@ def test_model_filter_long_period_from_model_tokens(client, db_path):
     assert body["distributions"]["generation_tokens"] == []
 
 
+def test_model_long_period_no_filter_from_model_tokens(client, db_path):
+    """>24ч без model-фильтра — счётчики из model_tokens, сумма по моделям
+    (без полного скана metric_samples)."""
+    import json
+    import sqlite3
+
+    H0 = (NOW // 3600) * 3600 - 3 * 86_400
+    rows = [
+        (H0, "m1", 1000, 100, 55, json.dumps({"stop": 50, "length": 5}), 2, 100, 200,
+         json.dumps({"16": 100}), None),
+        (H0, "m2", 500, 50, 20, json.dumps({"stop": 10}), 1, 50, 100, None,
+         json.dumps({"32": 40})),
+    ]
+    c = sqlite3.connect(db_path)
+    c.executemany(
+        """INSERT INTO model_tokens
+           (ts, model, prompt_tokens, completion_tokens, requests_finished,
+            finish_reasons, preemptions, prefix_hits, prefix_queries,
+            prompt_dist, generation_dist)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        rows,
+    )
+    c.commit()
+    c.close()
+
+    body = client.get(
+        "/api/model", params={"from": H0 - 86_400, "to": H0 + 3600}
+    ).json()
+    kpi = body["kpi"]
+    # finish reasons — сумма по моделям: stop 50+10, length 5
+    assert kpi["finish_reasons"] == {"stop": 60, "length": 5}
+    # requests_finished — сумма finish_reasons (60+5)
+    assert kpi["requests_finished"] == 65
+    # prefix: (100+50)/(200+100)
+    assert kpi["prefix_hit_rate"] == pytest.approx(150 / 300)
+    # preemptions: 2+1
+    assert kpi["preemptions"] == 3
+    # distributions — сумма по le (m1: prompt 16→100; m2: generation 32→40)
+    assert body["distributions"]["prompt_tokens"] == [[16, 100]]
+    assert body["distributions"]["generation_tokens"] == [[32, 40]]
+
+
 def test_model_filter_long_period_no_model_tokens(client, db_path):
     """issue #5: данных в model_tokens нет — null, не 0 (разрывы)."""
     body = client.get(

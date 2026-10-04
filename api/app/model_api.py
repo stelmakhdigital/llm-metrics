@@ -75,42 +75,89 @@ def _counter_delta(
 
 
 async def _first_last(
-    db, metrics_prefix_like: str, from_: int, to: int, model: str | None = None
+    db, from_: int, to: int, model: str | None = None
 ) -> dict[str, tuple[float, float]]:
-    """{metric: (первое значение, последнее значение)} в [from, to]."""
+    """{metric: (первое значение, последнее значение)} в [from, to].
+
+    Одна сканирующая выборка (MIN/MAX ts по метрике) + значения точечными
+    запросами по индексу (metric, ts) — без повторного полного скана
+    (ранее: два полных скана по MIN и по MAX, ~2× время ответа /api/model).
+    """
     mfilter = " AND model = ?" if model else ""
-    mparams = [model] if model else []
-    first: dict[str, float] = {}
-    last: dict[str, float] = {}
+    mparams = [from_, to, *([model] if model else [])]
     rows = rows_to_dicts(
         await db.execute_fetchall(
-            f"""SELECT s.metric, s.value FROM metric_samples s
-               JOIN (SELECT metric, MIN(ts) AS mt FROM metric_samples
-                     WHERE metric LIKE ? AND ts >= ? AND ts <= ?{mfilter}
-                     GROUP BY metric) m
-               ON s.metric = m.metric AND s.ts = m.mt""",
-            [metrics_prefix_like, from_, to, *mparams],
+            f"""SELECT metric, MIN(ts) AS fts, MAX(ts) AS lts
+               FROM metric_samples
+               WHERE ts >= ? AND ts <= ?{mfilter}
+               GROUP BY metric""",
+            mparams,
         )
     )
-    for r in rows:
-        first[r["metric"]] = r["value"]
+    bounds: dict[str, tuple[int, int]] = {
+        r["metric"]: (r["fts"], r["lts"]) for r in rows
+    }
+    if not bounds:
+        return {}
+
+    async def _values(pairs: list[tuple[str, int]]) -> dict[str, float]:
+        if not pairs:
+            return {}
+        conds = " OR ".join(["(metric = ? AND ts = ?)"] * len(pairs))
+        params = [x for m, t in pairs for x in (m, t)]
+        rr = rows_to_dicts(
+            await db.execute_fetchall(
+                f"SELECT metric, value FROM metric_samples WHERE {conds}", params
+            )
+        )
+        return {r["metric"]: r["value"] for r in rr}
+
+    first = await _values([(m, b[0]) for m, b in bounds.items()])
+    last = await _values([(m, b[1]) for m, b in bounds.items()])
+    return {
+        m: (first[m], last[m]) for m in bounds if m in first and m in last
+    }
+
+
+async def _model_segments(
+    db, from_: int, to: int, model: str | None = None
+) -> list[dict[str, Any]]:
+    """Сегменты моделей (name, from, to) за период.
+
+    Источник — ``model_tokens`` (маленькая таблица, без полного скана
+    metric_samples); агрегата нет — fallback на сырые выборки.
+    """
+    mfilter = " AND model = ?" if model else ""
+    mparams = [(from_ // 3600) * 3600, to, *([model] if model else [])]
     rows = rows_to_dicts(
         await db.execute_fetchall(
-            f"""SELECT s.metric, s.value FROM metric_samples s
-               JOIN (SELECT metric, MAX(ts) AS mt FROM metric_samples
-                     WHERE metric LIKE ? AND ts >= ? AND ts <= ?{mfilter}
-                     GROUP BY metric) m
-               ON s.metric = m.metric AND s.ts = m.mt""",
-            [metrics_prefix_like, from_, to, *mparams],
+            f"""SELECT model AS name, MIN(ts) AS from_ts, MAX(ts) AS to_ts
+               FROM model_tokens
+               WHERE ts >= ? AND ts < ?{mfilter}
+               GROUP BY model ORDER BY from_ts""",
+            mparams,
         )
     )
-    for r in rows:
-        last[r["metric"]] = r["value"]
-    out: dict[str, tuple[float, float]] = {}
-    for m in set(first) | set(last):
-        if m in first and m in last:
-            out[m] = (first[m], last[m])
-    return out
+    if rows:
+        return [
+            {"name": r["name"], "from": r["from_ts"], "to": r["to_ts"]} for r in rows
+        ]
+    # fallback: сырые выборки (полный скан) — только когда агрегата нет
+    rfilter = " AND model = ?" if model else ""
+    rparams = [from_, to, *([model] if model else [])]
+    rrows = rows_to_dicts(
+        await db.execute_fetchall(
+            f"""SELECT model AS name, MIN(ts) AS from_ts, MAX(ts) AS to_ts
+               FROM metric_samples
+               WHERE source = 'vllm' AND model IS NOT NULL
+                 AND ts >= ? AND ts <= ?{rfilter}
+               GROUP BY model ORDER BY from_ts""",
+            rparams,
+        )
+    )
+    return [
+        {"name": r["name"], "from": r["from_ts"], "to": r["to_ts"]} for r in rrows
+    ]
 
 
 async def _raw_points(
@@ -179,9 +226,11 @@ async def build_model_response(
 
     ``model`` (F4.4): фильтр по метке модели. Период ≤24ч — сырые данные;
     >24ч — rates/квантили из ``metric_hourly`` (с 0004 агрегаты несут
-    model). Счётчики (finish reasons, distributions, prefix, preemptions)
-    при фильтре и периоде >24ч — из ``model_tokens`` (0005, дельты по
-    модели за закрытые часы; глубина = ретенция агрегата). «Последние
+    model). Счётчики (finish reasons, distributions, prefix, preemptions) на
+    периоде >24ч — из агрегата ``model_tokens`` (дельты по часам; ``model=None``
+    — сумма по всем моделям), чтобы не делать полный скан metric_samples;
+    агрегата нет (или период ≤24ч) — дельты сырых счётчиков. Сегментация
+    моделей — тоже из ``model_tokens`` (fallback на сырые). «Последние
     значения» (running/waiting/kv) — только сырые: при фильтре и периоде,
     выходящем за raw-ретенцию (168ч), — null.
     """
@@ -189,22 +238,9 @@ async def build_model_response(
     if from_ < 0 or to <= from_:
         return resp
 
-    # --- сегментация по метке model (вертикальные линии на графике)
-    mfilter = " AND model = ?" if model else ""
-    mparams = [from_, to, *([model] if model else [])]
-    rows = rows_to_dicts(
-        await db.execute_fetchall(
-            f"""SELECT model AS name, MIN(ts) AS from_ts, MAX(ts) AS to_ts
-               FROM metric_samples
-               WHERE source = 'vllm' AND model IS NOT NULL
-                 AND ts >= ? AND ts <= ?{mfilter}
-               GROUP BY model ORDER BY from_ts""",
-            mparams,
-        )
-    )
-    resp["models"] = [
-        {"name": r["name"], "from": r["from_ts"], "to": r["to_ts"]} for r in rows
-    ]
+    # --- сегментация по метке model (вертикальные линии на графике);
+    # источник — агрегат model_tokens (маленькая таблица), fallback — сырые
+    resp["models"] = await _model_segments(db, from_, to, model)
 
     kpi = resp["kpi"]
 
@@ -257,11 +293,16 @@ async def build_model_response(
     # --- счётчики за период (дифф)
     # model-фильтр и период глубже raw-ретенции — из агрегата model_tokens
     # (issue #5); иначе — дельты сырых счётчиков
-    counters = {}
-    if model is not None and span > RAW_SPAN_S:
+    # Счётчики за период: >24ч — из агрегата model_tokens (маленькая таблица,
+    # без полного скана metric_samples; model=None — сумма по всем моделям);
+    # агрегата нет или ≤24ч — дельты сырых счётчиков
+    counters: dict[str, Any] = {}
+    if span > RAW_SPAN_S:
         counters = await _model_tokens_summary(db, from_, to, model)
+        if not counters:
+            counters = await _first_last(db, from_, to, model)
     else:
-        counters = await _first_last(db, "%", from_, to, model)
+        counters = await _first_last(db, from_, to, model)
     # finish reasons
     reasons: dict[str, int] = {}
     finished = 0
@@ -325,17 +366,19 @@ async def build_model_response(
 
 
 async def _model_tokens_summary(
-    db, from_: int, to: int, model: str
+    db, from_: int, to: int, model: str | None = None
 ) -> dict[str, Any]:
-    """Сводка model_tokens за период для модели (issue #5): дельты
-    счётчиков, finish reasons, preemptions, prefix, distribution'ы.
-    Пустой dict — данных нет."""
+    """Сводка model_tokens за период (issue #5): дельты счётчиков, finish
+    reasons, preemptions, prefix, distribution'ы. ``model=None`` — сумма по
+    всем моделям в периоде. Пустой dict — данных нет."""
+    mfilter = " AND model = ?" if model else ""
+    mparams = [*([model] if model else []), (from_ // 3600) * 3600, to]
     rows = rows_to_dicts(
         await db.execute_fetchall(
-            """SELECT finish_reasons, preemptions, prefix_hits, prefix_queries,
+            f"""SELECT finish_reasons, preemptions, prefix_hits, prefix_queries,
                       prompt_dist, generation_dist
-               FROM model_tokens WHERE model = ? AND ts >= ? AND ts < ?""",
-            (model, (from_ // 3600) * 3600, to),
+               FROM model_tokens WHERE 1=1{mfilter} AND ts >= ? AND ts < ?""",
+            mparams,
         )
     )
     if not rows:
