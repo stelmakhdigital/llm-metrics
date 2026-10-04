@@ -330,7 +330,9 @@ def test_live_sse_packet_from_snapshots(live_server, monkeypatch):
             "prefix_cache_hits_rate": 1.2,
             "prefix_cache_queries_rate": 10.0,
             "ttft_p95": 0.42,
+            "ttft_p50": 0.10,
             "tpot_p95": 0.021,
+            "tpot_p50": 0.008,
             "e2e_latency_p95": 1.8,
             "num_preemptions_rate": 0.0,
         },
@@ -359,9 +361,20 @@ def test_live_sse_packet_from_snapshots(live_server, monkeypatch):
         "ts": NOW,
         "metrics": {
             "cpu_usage": 12.5,
+            "cpu_usage_core_0": 30.0,
+            "cpu_usage_core_1": 15.0,
+            "cpu_steal_pct": 0.5,
             "load_avg_1": 1.2,
+            "load_avg_5": 0.9,
+            "load_avg_15": 0.7,
             "ram_used_mb": 8192.0,
             "ram_total_mb": 65536.0,
+            "ram_available_mb": 50000.0,
+            "swap_used_mb": 100.0,
+            "disk_used_pct|/": 42.0,
+            "disk_read_mb_s": 5.0,
+            "net_rx_mbps": 100.0,
+            "psi_cpu_avg10": 1.1,
         },
     }
     app.state.statuses["vllm"].ok()
@@ -379,7 +392,9 @@ def test_live_sse_packet_from_snapshots(live_server, monkeypatch):
     assert kpi["kv_cache"] == 42.0
     assert kpi["prefix_hit_rate"] == pytest.approx(0.12)
     assert kpi["ttft_p95"] == 0.42
+    assert kpi["ttft_p50"] == 0.10
     assert kpi["tpot_p95"] == 0.021
+    assert kpi["tpot_p50"] == 0.008
     assert kpi["e2e_p95"] == 1.8
     assert kpi["preemptions_rate"] == 0.0
     assert p["gpu_total"] == {"power_w": 72.0, "mem_used_mib": 14620.0, "mem_total_mib": 16303.0}
@@ -390,7 +405,19 @@ def test_live_sse_packet_from_snapshots(live_server, monkeypatch):
         "ecc_correctable", "ecc_uncorrectable",
     }
     assert g0["id"] == 0 and g0["power_limit_w"] == 300.0 and g0["throttle"] == []
-    assert p["system"] == {"cpu": 12.5, "load1": 1.2, "ram_used_mib": 8192.0, "ram_total_mib": 65536.0}
+    # system — полный снимок (тот же формат, что /api/system)
+    sys_ = p["system"]
+    assert sys_["cpu"]["usage"] == 12.5
+    assert sys_["cpu"]["per_core"] == [30.0, 15.0]
+    assert sys_["cpu"]["steal_pct"] == 0.5
+    assert sys_["cpu"]["load"] == [1.2, 0.9, 0.7]
+    assert sys_["ram"]["used_mb"] == 8192.0
+    assert sys_["ram"]["swap_used_mb"] == 100.0
+    assert [d["mount"] for d in sys_["disks"]] == ["/"]
+    assert sys_["io"]["read_mb_s"] == 5.0
+    assert sys_["net"]["rx_mbps"] == 100.0
+    assert sys_["psi"]["cpu"]["avg10"] == 1.1
+    assert sys_["ts"] == NOW
 
 
 def test_live_sse_prefix_hit_rate_rolling(live_server, monkeypatch):

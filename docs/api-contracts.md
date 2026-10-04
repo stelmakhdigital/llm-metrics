@@ -10,17 +10,28 @@
   "model": "qwen3.8-27b-dflash2",
   "kpi": {"running": 3, "waiting": 0, "prompt_rate": 12.4, "gen_rate": 34.1,
           "kv_cache": 42.0, "prefix_hit_rate": 0.12,
-          "ttft_p95": 0.42, "tpot_p95": 0.021, "e2e_p95": 1.8, "preemptions_rate": 0.0},
+          "ttft_p95": 0.42, "ttft_p50": 0.10, "tpot_p95": 0.021, "tpot_p50": 0.008,
+          "e2e_p95": 1.8, "preemptions_rate": 0.0},
   "gpu_total": {"power_w": 306.0, "mem_used_mib": 58675, "mem_total_mib": 128814},
   "gpus": [{"id": 0, "name": "RTX 5070 Ti", "power_w": 72.0, "power_limit_w": 300.0,
             "mem_used_mib": 14620, "mem_total_mib": 16303, "util": 43, "temp": 43,
             "sm_clock_mhz": 1500, "mem_clock_mhz": 1313, "throttle": [],
             "ecc_correctable": 0, "ecc_uncorrectable": 0}],
-  "system": {"cpu": 12.5, "load1": 1.2, "ram_used_mib": 8192, "ram_total_mib": 65536},
+  "system": {
+    "cpu": {"usage": 12.5, "per_core": [30.0, 15.0], "steal_pct": 0.5, "freq_mhz": 3500, "load": [1.2, 0.9, 0.7]},
+    "ram": {"total_mb": 65536, "used_mb": 8192, "available_mb": 50000, "swap_used_mb": 100},
+    "disks": [{"mount": "/", "used_pct": 42.0}],
+    "io": {"read_mb_s": 5.0, "write_mb_s": 3.0},
+    "net": {"rx_mbps": 100.0, "tx_mbps": 50.0},
+    "psi": {"cpu": {"avg10": 1.1}, "memory": {}, "io": {}},
+    "ts": 1756200000
+  },
   "alerts_active": 0
 }
 ```
 - `alerts_active` (F4.1) — число активных алертов (колокольчик в шапке).
+- `kpi` несёт p95 **и** p50 (ttft/tpot) — live-карточки читают оба квантиля из пакета (без REST-опроса).
+- `system` — полный снимок системы (тот же формат, что `GET /api/system`): cpu (usage/per_core/steal_pct/freq_mhz/load), ram, disks[], io, net, psi, ts. Вкладка «Система» в Live-режиме читает данные из пакета, не опрашивая REST.
 - `kpi.prefix_hit_rate` — rolling за последние ~60 с (сглаживание карточки); если 60-с истории нет — ratio за 5-с окно коллектора (или `null`).
 - Источники offline: соответствующий блок = `null`, `sources.X = "offline"`.
 - Данные — последние значения коллекторов (кэш последнего снимка), не новый опрос.
@@ -86,7 +97,7 @@ export type GpuSnapshot = { id: number; name: string; power_w: number | null; po
 export type LivePacket = { ts: number; sources: Record<string, "ok" | "offline">;
   model: string | null; kpi: Record<string, number | null> | null;
   gpu_total: { power_w: number; mem_used_mib: number; mem_total_mib: number } | null;
-  gpus: GpuSnapshot[] | null; system: Record<string, number> | null };
+  gpus: GpuSnapshot[] | null; system: SystemSnapshot | null };
 export function useLive(): {
   packet: LivePacket | null;        // последний пакет
   connected: boolean;                // SSE жив

@@ -13,7 +13,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
-from ._shared import src_ok, throttle_names
+from ._shared import src_ok, system_snapshot_from_metrics, throttle_names
 
 router = APIRouter(prefix="/api")
 
@@ -77,7 +77,9 @@ def _build_live_packet(request: Request) -> dict[str, Any]:
                 else ((h / q) if (q and h is not None) else None)
             ),
             "ttft_p95": m.get("ttft_p95"),
+            "ttft_p50": m.get("ttft_p50"),
             "tpot_p95": m.get("tpot_p95"),
+            "tpot_p50": m.get("tpot_p50"),
             "e2e_p95": m.get("e2e_latency_p95"),
             "preemptions_rate": m.get("num_preemptions_rate"),
         }
@@ -85,15 +87,11 @@ def _build_live_packet(request: Request) -> dict[str, Any]:
 
     gpu_total, gpus = _gpu_block(snaps.get("gpu") if g_ok else None)
 
-    system = None
+    # system — полный снимок (cpu/ram/disks/io/net/psi) из кэша коллектора;
+    # один формат с /api/system (system_snapshot_from_metrics)
+    system: dict[str, Any] | None = None
     if s:
-        sm = s.get("metrics", {})
-        system = {
-            "cpu": sm.get("cpu_usage"),
-            "load1": sm.get("load_avg_1"),
-            "ram_used_mib": sm.get("ram_used_mb"),
-            "ram_total_mib": sm.get("ram_total_mb"),
-        }
+        system = system_snapshot_from_metrics(s.get("metrics", {}), s.get("ts") or int(time.time()))
 
     return {
         "ts": int(time.time()),

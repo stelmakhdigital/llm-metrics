@@ -1,10 +1,7 @@
 "use client";
 
 import { useLive } from "@/lib/live";
-import {
-  usePoll,
-  type SystemSnapshot,
-} from "@/lib/api";
+import type { SystemSnapshot } from "@/lib/api";
 import {
   fmtMhz,
   fmtMbS,
@@ -14,16 +11,12 @@ import {
 } from "@/lib/format";
 import {
   ChartCard,
-  ErrorBanner,
   InfoBanner,
   KpiCard,
   NoData,
   SkeletonKpi,
 } from "../common";
 import { cn } from "@/lib/utils";
-
-/** Период опроса /api/system в Live-режиме, мс. */
-export const SYSTEM_POLL_MS = 5_000;
 
 
 function DiskBars({ disks, title }: { disks: SystemSnapshot["disks"]; title: string }) {
@@ -57,30 +50,32 @@ function DiskBars({ disks, title }: { disks: SystemSnapshot["disks"]; title: str
 }
 
 /**
- * Вкладка «Система» в режиме Live: KPI + топ-5 процессов.
- * Источники — GET /api/system (poll раз в 5 с, поля — routes.py)
- * + статус источника из SSE-пакета (useLive).
+ * Вкладка «Система» в режиме Live: KPI из SSE-пакета (useLive, ~2 с).
+ * Поле `system` пакета — тот же снимок, что /api/system (единый формат).
  */
 export function SystemLive() {
-  const { packet } = useLive();
-  const { data, loading, error } = usePoll<SystemSnapshot>("/api/system", SYSTEM_POLL_MS);
+  const { packet, connected } = useLive();
+  const data = packet?.system ?? null;
+  const loading = packet == null;
 
   const sysOffline = packet != null && packet.sources?.system === "offline";
 
   return (
     <div className="space-y-3">
+      {!connected && (
+        <InfoBanner message="Соединение с сервером метрик не установлено — ждём SSE…" />
+      )}
       {sysOffline && (
         <InfoBanner message="Источник системы (system) оффлайн — данные не собираются." />
       )}
-      {error != null && <ErrorBanner message={error} />}
 
-      {loading && !data ? (
+      {loading ? (
         <SkeletonKpi rows={8} />
       ) : data ? (
         <>
           <div className="flex items-center justify-between">
             <div className="text-xs text-muted">
-              обновлено: {new Date(data.ts * 1000).toLocaleTimeString("ru-RU")} (poll 5 с)
+              обновлено: {new Date(data.ts * 1000).toLocaleTimeString("ru-RU")} (SSE, ~2 с)
             </div>
             {sysOffline && <span className="text-xs text-amber-400">источник offline</span>}
           </div>
@@ -179,7 +174,7 @@ export function SystemLive() {
           </div>
         </>
       ) : (
-        !error && <NoData />
+        <NoData />
       )}
     </div>
   );

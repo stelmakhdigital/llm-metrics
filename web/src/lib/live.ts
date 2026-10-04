@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { SystemSnapshot } from "./api";
 
 /** Снимок одного GPU (контракт: docs/api-contracts.md, GET /api/live). */
 export type GpuSnapshot = {
@@ -27,7 +28,7 @@ export type LivePacket = {
   kpi: Record<string, number | null> | null;
   gpu_total: { power_w: number; mem_used_mib: number; mem_total_mib: number } | null;
   gpus: GpuSnapshot[] | null;
-  system: Record<string, number> | null;
+  system: SystemSnapshot | null;
   /** F4.1: число активных алертов (колокольчик в шапке) */
   alerts_active: number;
 };

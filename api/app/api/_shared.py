@@ -220,6 +220,50 @@ async def _gpu_snapshot(request: Request, live: bool = False) -> list[dict[str, 
     return gpus
 
 
+def system_snapshot_from_metrics(latest: dict[str, Any], ts: int) -> dict[str, Any]:
+    """Метрики системы (имя → значение) → структура снимка (cpu/ram/disks/io/net/psi).
+
+    Общая для ``/api/system`` (собирает latest из БД) и SSE-пакета live
+    (берёт latest из кэша снимка) — единый формат для обеих выдач."""
+    disks: list[dict[str, Any]] = []
+    psi: dict[str, dict[str, float | None]] = {"cpu": {}, "memory": {}, "io": {}}
+    core_pairs: list[tuple[int, float | None]] = []
+    for m, v in latest.items():
+        if m.startswith("disk_used_pct|"):
+            disks.append({"mount": m.split("|", 1)[1], "used_pct": v})
+        elif m.startswith("cpu_usage_core_"):
+            try:
+                core_pairs.append((int(m.rsplit("_", 1)[1]), v))
+            except (ValueError, IndexError):
+                pass
+        elif m.startswith("psi_") and "_" in m[4:]:
+            kind, tail = m[4:].split("_", 1)
+            if kind in psi and tail.startswith("avg"):
+                psi[kind][tail] = v
+    core_values = [v for _, v in sorted(core_pairs, key=lambda t: t[0])]
+    lm = latest.get
+    return {
+        "cpu": {
+            "usage": lm("cpu_usage"),
+            "per_core": core_values,
+            "steal_pct": lm("cpu_steal_pct"),
+            "freq_mhz": lm("cpu_freq_mhz"),
+            "load": [lm("load_avg_1"), lm("load_avg_5"), lm("load_avg_15")],
+        },
+        "ram": {
+            "total_mb": lm("ram_total_mb"),
+            "used_mb": lm("ram_used_mb"),
+            "available_mb": lm("ram_available_mb"),
+            "swap_used_mb": lm("swap_used_mb"),
+        },
+        "disks": sorted(disks, key=lambda d: d["mount"]),
+        "io": {"read_mb_s": lm("disk_read_mb_s"), "write_mb_s": lm("disk_write_mb_s")},
+        "net": {"rx_mbps": lm("net_rx_mbps"), "tx_mbps": lm("net_tx_mbps")},
+        "psi": psi,
+        "ts": ts,
+    }
+
+
 def src_ok(statuses, name: str) -> bool:
     return statuses[name].status == "online"
 
