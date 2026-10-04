@@ -64,18 +64,24 @@ export function OverviewTab() {
   // 5-минутной границе (как 30-дневное окно вкладки «Стоимость»).
   const now = useNow(60_000);
   const dayAgo = now - DAY_S;
-
-  const overview = usePoll<OverviewSnapshot>(OVERVIEW_URL, 30_000);
-  const health = usePoll<HealthInfo>(HEALTH_URL, 30_000);
-
-  // KPI текущей модели за 24ч: фильтр по модели, когда она уже известна.
-  const model = usePoll<ModelData>(modelUrl(dayAgo, now, overview.data?.model ?? null), 60_000);
-
-  // Стоимость: 24ч (окно смещается по минуте) и 7д (окно по 5-минутной границе).
-  const cost24 = usePoll<CostData>(costUrl(dayAgo, now), 60_000);
   const weekTo = Math.floor(now / 300) * 300;
-  const cost7 = usePoll<CostData>(costUrl(weekTo - 7 * DAY_S, weekTo), 5 * 60_000);
 
+  // API — одноресурсный (SQLite + Python на CPU, занятом vLLM): параллельные
+  // тяжёлые запросы упираются в 30s-таймаут прокси (500). Тяжёлые гранируем:
+  // model → overview → cost24 → cost7, по одному. Лёгкие (health, alerts) — сразу.
+  // (один активный model-деплой: /api/model без фильтра = KPI текущей модели)
+  const model = usePoll<ModelData>(modelUrl(dayAgo, now), 60_000);
+  const modelDone = model.data != null || model.error != null;
+
+  const overview = usePoll<OverviewSnapshot>(modelDone ? OVERVIEW_URL : null, 30_000);
+  const ovDone = overview.data != null || overview.error != null;
+
+  const cost24 = usePoll<CostData>(ovDone ? costUrl(dayAgo, now) : null, 60_000);
+  const c24Done = cost24.data != null || cost24.error != null;
+
+  const cost7 = usePoll<CostData>(c24Done ? costUrl(weekTo - 7 * DAY_S, weekTo) : null, 5 * 60_000);
+
+  const health = usePoll<HealthInfo>(HEALTH_URL, 30_000);
   const alerts = usePoll<AlertsData>(ALERTS_URL, 30_000);
 
   // --- статус стека: предпочитаем детальный /api/health, fallback — overview
@@ -189,23 +195,31 @@ export function OverviewTab() {
       <div className="grid gap-3 lg:grid-cols-3">
         {/* GPU — суммарно */}
         <ChartCard title="GPU — суммарно" tip="Сумма/среднее по всем GPU из последнего снимка поллера.">
-          <div className="space-y-1 text-sm">
-            <Row label="Мощность" value={ov ? fmtW(ov.total_power_w) : NA} />
-            <Row label="Загрузка" value={gpuUtil != null ? fmtPct(gpuUtil) : NA} />
-            <Row
-              label="Память"
-              value={
-                ov && ov.total_mem_used_mib != null
-                  ? `${fmtMiB(ov.total_mem_used_mib)} / ${fmtMiB(ov.total_mem_mib)}`
-                  : NA
-              }
-              sub={gpuMemPct != null ? fmtPct(gpuMemPct) : undefined}
-            />
-          </div>
-          {!ov || ov.gpus.length === 0 ? (
+          {ov ? (
+            <>
+              <div className="space-y-1 text-sm">
+                <Row label="Мощность" value={fmtW(ov.total_power_w)} />
+                <Row label="Загрузка" value={gpuUtil != null ? fmtPct(gpuUtil) : NA} />
+                <Row
+                  label="Память"
+                  value={
+                    ov.total_mem_used_mib != null
+                      ? `${fmtMiB(ov.total_mem_used_mib)} / ${fmtMiB(ov.total_mem_mib)}`
+                      : NA
+                  }
+                  sub={gpuMemPct != null ? fmtPct(gpuMemPct) : undefined}
+                />
+              </div>
+              {ov.gpus.length === 0 ? (
+                <NoData text="Нет данных (GPU оффлайн?)" />
+              ) : (
+                <div className="mt-2 text-xs text-muted">GPU: {ov.gpus.length}</div>
+              )}
+            </>
+          ) : ovDone ? (
             <NoData text="Нет данных (GPU оффлайн?)" />
           ) : (
-            <div className="mt-2 text-xs text-muted">GPU: {ov.gpus.length}</div>
+            <NoData text="Загрузка…" />
           )}
         </ChartCard>
 
