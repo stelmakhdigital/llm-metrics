@@ -10,7 +10,7 @@ export default function TabsLayout({
     <div className="min-h-screen">
       <Header />
       <Sidebar />
-      <main className="ml-24 px-6 py-5">{children}</main>
+      <main className="ml-0 px-4 py-4 pb-24 md:ml-24 md:px-6 md:py-5 md:pb-5">{children}</main>
     </div>
   );
 }

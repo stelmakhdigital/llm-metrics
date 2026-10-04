@@ -48,75 +48,82 @@ export function Header() {
       : models;
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-line bg-background/95 px-4 backdrop-blur">
-      <div className="flex size-8 items-center justify-center rounded-lg bg-accent text-white">
-        <Activity className="size-4" />
-      </div>
-
-      <Select
-        value={model ?? ""}
-        onChange={(e) => setModel(e.target.value || null)}
-        aria-label="Модель"
-        className="w-56"
-      >
-        <option value="">Все модели</option>
-        {modelOptions.map((m) => (
-          <option key={m.name} value={m.name}>
-            {m.name}
-          </option>
-        ))}
-      </Select>
-
-      <Badge variant={anyOffline ? "destructive" : "success"}>
-        {anyOffline ? "оффлайн" : "готов"}
-      </Badge>
-
-      <div className="ml-auto flex items-center gap-3">
-        <div className="flex items-center gap-1">
-          {SOURCE_BADGES.map(({ key, label }) => {
-            const state = sources[key];
-            return (
-              <Badge key={key} variant="outline" className="gap-1.5 text-[11px]">
-                <span
-                  aria-hidden
-                  className={cn(
-                    "size-1.5 rounded-full",
-                    state === "ok" && "bg-emerald-400",
-                    state === "offline" && "bg-red-400",
-                    state == null && "bg-muted/50",
-                  )}
-                />
-                {label}
-              </Badge>
-            );
-          })}
+    <header className="sticky top-0 z-30 flex flex-col border-b border-line bg-background/95 px-3 backdrop-blur md:flex-row md:items-center md:px-4">
+      {/* Строка 1: логотип, модель, статус + (алерт, обновить) */}
+      <div className="flex min-h-14 items-center gap-2 py-2 md:min-h-0 md:flex-1 md:gap-3 md:py-0">
+        <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent text-white">
+          <Activity className="size-4" />
         </div>
 
-        <Link
-          href="/alerts"
-          title="Алерты"
-          className="relative rounded-lg p-1.5 text-muted transition-colors hover:bg-panel2 hover:text-foreground"
+        <Select
+          value={model ?? ""}
+          onChange={(e) => setModel(e.target.value || null)}
+          aria-label="Модель"
+          className="min-w-0 flex-1 md:w-56 md:flex-none"
         >
-          <Bell className="size-4" />
-          {alertsActive > 0 && (
-            <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold text-white">
-              {alertsActive}
-            </span>
-          )}
-        </Link>
+          <option value="">Все модели</option>
+          {modelOptions.map((m) => (
+            <option key={m.name} value={m.name}>
+              {m.name}
+            </option>
+          ))}
+        </Select>
 
-        <button
-          type="button"
-          onClick={onRefresh}
-          title="Обновить данные"
-          className="rounded-lg p-1.5 text-muted transition-colors hover:bg-panel2 hover:text-foreground"
-        >
-          <RefreshCw className={cn("size-4", spinning && "animate-spin")} />
-        </button>
+        <Badge variant={anyOffline ? "destructive" : "success"} className="shrink-0">
+          {anyOffline ? "оффлайн" : "готов"}
+        </Badge>
 
-        <PeriodSwitcher />
+        <div className="ml-auto flex shrink-0 items-center gap-1.5 md:gap-3">
+          <div className="hidden items-center gap-1 md:flex">
+            {SOURCE_BADGES.map(({ key, label }) => {
+              const state = sources[key];
+              return (
+                <Badge key={key} variant="outline" className="gap-1.5 text-[11px]">
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "size-1.5 rounded-full",
+                      state === "ok" && "bg-emerald-400",
+                      state === "offline" && "bg-red-400",
+                      state == null && "bg-muted/50",
+                    )}
+                  />
+                  {label}
+                </Badge>
+              );
+            })}
+          </div>
 
-        <span className="flex items-center gap-1.5 text-xs text-muted">
+          <Link
+            href="/alerts"
+            title="Алерты"
+            className="relative rounded-lg p-2 text-muted transition-colors hover:bg-panel2 hover:text-foreground"
+          >
+            <Bell className="size-4" />
+            {alertsActive > 0 && (
+              <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold text-white">
+                {alertsActive}
+              </span>
+            )}
+          </Link>
+
+          <button
+            type="button"
+            onClick={onRefresh}
+            title="Обновить данные"
+            className="rounded-lg p-2 text-muted transition-colors hover:bg-panel2 hover:text-foreground"
+          >
+            <RefreshCw className={cn("size-4", spinning && "animate-spin")} />
+          </button>
+        </div>
+      </div>
+
+      {/* Строка 2 (на <md — отдельная, на md+ инлайн): периоды + часы */}
+      <div className="-my-0.5 flex items-center gap-3 overflow-x-auto py-2 md:py-0">
+        <div className="shrink-0">
+          <PeriodSwitcher />
+        </div>
+        <span className="hidden shrink-0 items-center gap-1.5 text-xs text-muted md:flex">
           <span
             aria-hidden
             className={cn(

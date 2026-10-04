@@ -150,7 +150,19 @@ export default function UPlotChart({ series, height = 220, live = false, stack =
 
     const chart = new uPlot(opts, [[...xs], ...values], hostRef.current);
     chartRef.current = chart;
+
+    // пересчёт ширины при изменении контейнера (мобильная ширина, rotate, ресайз)
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined" && hostRef.current) {
+      ro = new ResizeObserver((entries) => {
+        const w = entries[0]?.contentRect.width;
+        if (w && chartRef.current) chartRef.current.setSize({ width: w, height });
+      });
+      ro.observe(hostRef.current);
+    }
+
     return () => {
+      ro?.disconnect();
       chart.destroy();
       chartRef.current = null;
     };
