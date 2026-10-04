@@ -18,11 +18,11 @@ export default function RootLayout({
   return (
     <html lang="ru">
       <body className="min-h-screen bg-background font-sans text-foreground antialiased">
-        <PeriodProvider>
-          <ModelProvider>
-            <RefreshProvider>{children}</RefreshProvider>
-          </ModelProvider>
-        </PeriodProvider>
+        <RefreshProvider>
+          <PeriodProvider>
+            <ModelProvider>{children}</ModelProvider>
+          </PeriodProvider>
+        </RefreshProvider>
       </body>
     </html>
   );

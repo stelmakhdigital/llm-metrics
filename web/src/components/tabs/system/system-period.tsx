@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { usePeriod } from "@/lib/periods";
+import { useRefresh } from "@/lib/refresh";
 import { useLive } from "@/lib/live";
 import {
   fetchJson,
@@ -64,6 +65,7 @@ function coreSpecs(cores: number): MetricSpec[] {
 function PeriodDisks({ from, to, mounts }: { from: number; to: number; mounts: string[] }) {
   const [rows, setRows] = useState<{ mount: string; pct: number | null }[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { tick: refreshTick } = useRefresh();
 
   useEffect(() => {
     if (mounts.length === 0) {
@@ -98,7 +100,7 @@ function PeriodDisks({ from, to, mounts }: { from: number; to: number; mounts: s
     return () => {
       cancelled = true;
     };
-  }, [mounts, from, to]);
+  }, [mounts, from, to, refreshTick]);
 
   return (
     <ChartCard title="Занятость дисков (последнее значение периода)" tip="Занятость дисковых пространств по mount-точкам, %. Последняя точка за период.">

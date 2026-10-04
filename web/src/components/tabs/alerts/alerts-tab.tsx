@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { fmtAgo, fmtTimeS } from "@/lib/format";
+import { useRefresh } from "@/lib/refresh";
 import { ErrorBanner, InfoBanner } from "../common";
 import { cn } from "@/lib/utils";
 
@@ -92,9 +93,11 @@ function AlertsSettingsCard() {
         setStatus({ kind: "err", text: e instanceof Error ? e.message : "Ошибка API" }),
       );
   const [tick, setTick] = useState(0);
+  const { tick: refreshTick } = useRefresh();
   useEffect(() => {
     load();
-  }, [tick]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tick, refreshTick]);
 
   const patchRule = (id: string, patch: Partial<AlertRule>) =>
     setDraft((d) =>

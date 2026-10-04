@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { fetchJson, MODELS_URL, type ModelInfo } from "@/lib/api";
+import { useRefresh } from "@/lib/refresh";
 
 /**
  * Глобальный селектор модели (F4.4, ТЗ §10.1).
@@ -29,6 +30,7 @@ export function ModelProvider({ children }: { children: ReactNode }) {
   const [model, setModel] = useState<string | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [loadingModels, setLoadingModels] = useState(true);
+  const { tick: refreshTick } = useRefresh();
 
   useEffect(() => {
     let cancelled = false;
@@ -45,7 +47,7 @@ export function ModelProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [refreshTick]);
 
   return (
     <ModelContext.Provider
