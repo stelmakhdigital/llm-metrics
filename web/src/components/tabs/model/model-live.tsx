@@ -9,7 +9,7 @@ import {
   type ModelData,
 } from "@/lib/api";
 import { useLive } from "@/lib/live";
-import { fmtDateTime, NA, fmtTimeS } from "@/lib/format";
+import { NA, fmtTimeS } from "@/lib/format";
 import { ErrorBanner, InfoBanner, SkeletonKpi } from "../common";
 import { FinishReasons } from "./finish-reasons";
 import { KpiGrid, liveKpiCards } from "./kpi";
@@ -70,8 +70,7 @@ export function ModelLive() {
           <div className="mb-1 text-sm font-medium text-foreground">Live (SSE)</div>
           KPI обновляются каждые ~2 с (пакет /api/live). p50-квантили и причины
           финиша считаются по данным за последние 5 минут
-          (окно: {fmtDateTime(now - LIVE_WINDOW_S)} — {fmtDateTime(now)}) и
-          обновляются раз в минуту.
+          и обновляются раз в минуту.
           <div className="mt-2">
             Ключи KPI (контракт SSE): running, waiting, prompt_rate, gen_rate,
             kv_cache, prefix_hit_rate, ttft_p95, tpot_p95, e2e_p95,
