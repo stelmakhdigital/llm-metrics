@@ -458,3 +458,55 @@ export interface HealthSummary {
 }
 
 export const HEALTH_SUMMARY_URL = "/api/health/summary";
+
+// -------------------------------------------------------- /api/health (F4.3)
+
+/** Статус одного источника (GET /api/health → sources.{name}). */
+export interface SourceStatusDict {
+  status: string; // online | offline | unknown
+  last_ok_ts: number | null;
+  last_poll_ts: number | null;
+  last_error: string | null;
+}
+
+/** GET /api/health — сводный статус сервиса и источников. */
+export interface HealthInfo {
+  ok: boolean;
+  version: string;
+  uptime_s: number;
+  db_path: string;
+  sources: Record<string, SourceStatusDict>;
+}
+
+export const HEALTH_URL = "/api/health";
+
+// --------------------------------------------------------- /api/overview
+
+/** GPU из GET /api/overview (снимок поллера: последние выборки). */
+export interface OverviewGpu {
+  id: number | null;
+  name: string | null;
+  power_w: number | null;
+  util_pct: number | null;
+  mem_used_mib: number | null;
+  mem_total_mib: number | null;
+  temp_c: number | null;
+}
+
+/** GET /api/overview — KPI шапки: статусы источников, модель, GPU, сумм. мощность/VRAM. */
+export interface OverviewSnapshot {
+  sources: Record<string, SourceStatusDict>;
+  model: string | null;
+  vllm: {
+    num_requests_running: number | null;
+    num_requests_waiting: number | null;
+    kv_cache_usage: number | null;
+  };
+  gpus: OverviewGpu[];
+  total_power_w: number | null;
+  total_mem_used_mib: number | null;
+  total_mem_mib: number | null;
+  ts: number;
+}
+
+export const OVERVIEW_URL = "/api/overview";

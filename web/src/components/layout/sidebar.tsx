@@ -11,11 +11,13 @@ import {
   Settings,
   Bell,
   HeartPulse,
+  LayoutDashboard,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV: { href: string; label: string; icon: LucideIcon }[] = [
+  { href: "/overview", label: "Сводка", icon: LayoutDashboard },
   { href: "/model", label: "Модель", icon: Cpu },
   { href: "/gpu", label: "GPU", icon: Gauge },
   { href: "/system", label: "Система", icon: Server },
