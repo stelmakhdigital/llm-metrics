@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRefresh } from "./refresh";
 
 /** Палитра серий графиков (тёмная тема; accent — оранжевый). */
 export const PALETTE = [
@@ -16,10 +17,36 @@ export const PALETTE = [
   "#4ade80",
 ];
 
+// Кэш ответов GET-эндпоинтов (мемоизация + дедуп in-flight).
+// Только исторические (периодные) данные — не живые опросы.
+const CACHABLE = /^\/api\/(metrics\/|model|cost)/;
+const CACHE_TTL_MS = 30_000;
+const _cache = new Map<string, { at: number; data: unknown }>();
+const _inflight = new Map<string, Promise<unknown>>();
+
 export async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return (await res.json()) as Promise<T>;
+  // мемоизация + дедупликация in-flight: повторные запросы того же URL
+  // (свиток периодов/моделей, строгий режим React) не идут в сеть заново.
+  // Исторические (не-живые) эндпоинты кешируются на TTL, живые — только дедуп.
+  const ttl = CACHABLE.test(url) ? CACHE_TTL_MS : 0;
+  const hit = _cache.get(url);
+  if (hit && Date.now() - hit.at < ttl) return hit.data as T;
+  const pending = _inflight.get(url);
+  if (pending) return pending as Promise<T>;
+  const p = (async () => {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = (await res.json()) as T;
+    _cache.set(url, { at: Date.now(), data });
+    return data;
+  })().finally(() => _inflight.delete(url));
+  _inflight.set(url, p);
+  return p;
+}
+
+/** Разорвать кэш (кнопка «Обновить»): следующий fetch пойдёт в сеть. */
+export function bustCache(): void {
+  _cache.clear();
 }
 
 /** PUT с JSON-телом (напр. /api/settings/cost). */
@@ -180,6 +207,8 @@ export function useNow(intervalMs: number): number {
 export function usePoll<T>(url: string | null, intervalMs = 0): PollState<T> {
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
+  // глобальный «Обновить» — тоже заставляет повторить запрос
+  const { tick: refreshTick } = useRefresh();
 
   const [state, setState] = useState<{
     data: T | null;
@@ -214,7 +243,7 @@ export function usePoll<T>(url: string | null, intervalMs = 0): PollState<T> {
       cancelled = true;
       if (timer != null) clearInterval(timer);
     };
-  }, [url, intervalMs, tick]);
+  }, [url, intervalMs, tick, refreshTick]);
 
   return { ...state, refresh };
 }

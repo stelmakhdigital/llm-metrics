@@ -1,12 +1,15 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
-import { Activity, Bell } from "lucide-react";
+import { Activity, Bell, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Select } from "@/components/ui/select";
 import { PeriodSwitcher } from "@/components/layout/period-switcher";
 import { fmtClock, useLive, useNow } from "@/lib/live";
 import { useModel } from "@/lib/model-context";
+import { useRefresh } from "@/lib/refresh";
+import { bustCache } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const SOURCE_BADGES: { key: "vllm" | "gpu" | "system"; label: string }[] = [
@@ -24,6 +27,14 @@ export function Header() {
   const { packet, connected, lastUpdate } = useLive();
   useNow(1000); // тик раз в секунду для часов
   const { model, setModel, models } = useModel();
+  const { refresh } = useRefresh();
+  const [spinning, setSpinning] = useState(false);
+  const onRefresh = () => {
+    bustCache();
+    refresh();
+    setSpinning(true);
+    window.setTimeout(() => setSpinning(false), 600);
+  };
 
   const sources = packet?.sources ?? {};
   const anyOffline = Object.values(sources).includes("offline");
@@ -93,6 +104,15 @@ export function Header() {
             </span>
           )}
         </Link>
+
+        <button
+          type="button"
+          onClick={onRefresh}
+          title="Обновить данные"
+          className="rounded-lg p-1.5 text-muted transition-colors hover:bg-panel2 hover:text-foreground"
+        >
+          <RefreshCw className={cn("size-4", spinning && "animate-spin")} />
+        </button>
 
         <PeriodSwitcher />
 

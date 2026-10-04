@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Download, FileImage } from "lucide-react";
+import { useRefresh } from "@/lib/refresh";
 import UPlotChart, { type ChartSeries } from "@/components/charts/UPlotChart";
 import MarkedUPlot, { type ChartMark } from "@/components/charts/marked-uplot";
 import { fetchJson, metricUrl, type MetricResponse } from "@/lib/api";
@@ -209,6 +210,7 @@ export function MetricChart({
 
   // specs — константы модуля, передаются стабильно; key — на случай динамических списков
   const key = specs.map((s) => s.metric).join(",");
+  const { tick: refreshTick } = useRefresh();
   useEffect(() => {
     let cancelled = false;
     setState({
@@ -242,7 +244,7 @@ export function MetricChart({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, from, to, model]);
+  }, [key, from, to, model, refreshTick]);
 
   const marksList = marks ?? [];
   const hasData = state.hasData;
