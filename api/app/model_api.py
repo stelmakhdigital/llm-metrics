@@ -27,6 +27,10 @@ from typing import Any
 from .storage.db import rows_to_dicts
 
 RAW_SPAN_S = 24 * 3600
+# Глубина сырых выборок (ретенция metric_samples). Окно глубже — сырых данных
+# уже нет, считать дельты счётчиков от «старейшего доступного» образца нельзя
+# (тихо заниженный счёт): KPI остаётся null (разрыв, не 0).
+RAW_RETENTION_S = 168 * 3600
 
 _TOKEN_BUCKET_PREFIXES = (
     "request_prompt_tokens_bucket_",
@@ -299,7 +303,9 @@ async def build_model_response(
     counters: dict[str, Any] = {}
     if span > RAW_SPAN_S:
         counters = await _model_tokens_summary(db, from_, to, model)
-        if not counters:
+        # fallback на сырые дельты — только если окно покрывается raw-ретенцией;
+        # глубже (сырых данных нет) — counters={} → KPI null (разрыв, не 0)
+        if not counters and (to - from_) <= RAW_RETENTION_S:
             counters = await _first_last(db, from_, to, model)
     else:
         counters = await _first_last(db, from_, to, model)

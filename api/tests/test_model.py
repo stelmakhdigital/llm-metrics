@@ -278,3 +278,37 @@ def test_model_filter_long_period_no_model_tokens(client, db_path):
     assert kpi["prefix_hit_rate"] is None
     assert kpi["preemptions"] is None
     assert body["distributions"] == {"prompt_tokens": [], "generation_tokens": []}
+
+
+def test_model_beyond_raw_retention_no_counters(client, db_path):
+    """Окно глубже raw-ретенции (168ч), model_tokens пуст, а сырые счётчики
+    есть в последних ~7д: fallback на сырые НЕ срабатывает (иначе дельта была
+    бы от старейшего доступного образца → заниженный счёт). KPI — null (разрыв)."""
+    v = "vllm"
+    seed_samples(db_path, [
+        ("request_success_total_stop", NOW - 7200, 50.0, v, None, M_A),
+        ("request_success_total_stop", NOW - 3600, 150.0, v, None, M_A),
+    ])
+    body = client.get(
+        "/api/model", params={"from": NOW - 30 * 86_400, "to": NOW}
+    ).json()
+    kpi = body["kpi"]
+    assert kpi["finish_reasons"] == {}
+    assert kpi["requests_finished"] is None
+
+
+def test_model_within_raw_retention_fallback_raw(client, db_path):
+    """Окно >24ч и ≤168ч (3д), model_tokens пуст: счётчики считаются из сырых
+    дельток (fallback сработал)."""
+    v = "vllm"
+    seed_samples(db_path, [
+        ("request_success_total_stop", NOW - 7200, 50.0, v, None, M_A),
+        ("request_success_total_stop", NOW - 3600, 150.0, v, None, M_A),
+    ])
+    body = client.get(
+        "/api/model", params={"from": NOW - 3 * 86_400, "to": NOW}
+    ).json()
+    kpi = body["kpi"]
+    # дельта stop: 150 - 50 = 100
+    assert kpi["finish_reasons"] == {"stop": 100}
+    assert kpi["requests_finished"] == 100
