@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 
 from fastapi import APIRouter, HTTPException, Request
@@ -53,6 +54,7 @@ def _rules_from_body(items: list[AlertRuleIn]) -> list[Rule]:
                 for_s=r.for_s,
                 cooldown_s=r.cooldown_s,
                 enabled=r.enabled,
+                webhook=r.webhook,
             )
         )
     return out
@@ -69,6 +71,7 @@ class AlertRuleIn(BaseModel):
     for_s: int = Field(120, ge=0, le=86400)
     cooldown_s: int = Field(3600, ge=0, le=7 * 86400)
     enabled: bool = True
+    webhook: str | None = None  # per-rule Telegram-webhook (None — глобальный)
 
     @field_validator("level")
     @classmethod
@@ -152,6 +155,7 @@ async def alerts_settings_get(request: Request) -> dict:
         "enabled": bool(enabled),
         "telegram_webhook": final_webhook or "",
         "webhook_configured": bool(final_webhook),
+        "web_base_url": os.environ.get("WEB_BASE_URL") or "",
         "rules": rules_to_payload(rules) if rules else rules_to_payload(DEFAULT_RULES),
     }
 

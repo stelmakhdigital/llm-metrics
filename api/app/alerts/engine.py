@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from typing import Any
 
@@ -24,6 +25,38 @@ log = logging.getLogger(__name__)
 STALE_S = 180
 #: «Нарушение сейчас» — окно последних секунд.
 RECENT_S = 120
+
+
+def _web_base_url() -> str | None:
+    """Ссылка на UI в уведомлениях (env WEB_BASE_URL, опционально)."""
+    return os.environ.get("WEB_BASE_URL") or None
+
+
+def _ts_utc(now: int) -> str:
+    """чч:мм:сс UTC из epoch."""
+    return time.strftime("%H:%M:%S", time.gmtime(now))
+
+
+def trigger_message(rule: Rule, now: int, detail: str) -> str:
+    """Telegram-сообщение trigger: уровень, правило, detail, время, ссылка."""
+    emoji = "🚨" if rule.level == "critical" else "⚠️"
+    lines = [f"{emoji} [{rule.level.upper()}] llm-metrics", rule.title]
+    if detail:
+        lines.append(detail)
+    lines.append(f"Время: {_ts_utc(now)} UTC")
+    base = _web_base_url()
+    if base:
+        lines.append(f"{base}/alerts")
+    return "\n".join(lines)
+
+
+def resolve_message(rule: Rule, now: int) -> str:
+    """Telegram-сообщение восстановления: название правила (title), время, ссылка."""
+    lines = [f"✅ llm-metrics: «{rule.title}» — восстановлено", f"Время: {_ts_utc(now)} UTC"]
+    base = _web_base_url()
+    if base:
+        lines.append(f"{base}/alerts")
+    return "\n".join(lines)
 
 
 class AlertEngine:
@@ -93,7 +126,7 @@ class AlertEngine:
         )
         if not cfg["enabled"]:
             # выключили — разводим активные без уведомлений
-            await self._resolve_all(cfg["telegram_webhook"], silent=True)
+            await self._resolve_all(cfg["telegram_webhook"], silent=True, rules=cfg["rules"])
             return
         now = int(time.time())
         for rule in cfg["rules"]:
@@ -104,16 +137,20 @@ class AlertEngine:
                 continue
             st = self._states.get(rule.id)
             active = bool(st and st.get("active"))
+            webhook = rule.webhook or cfg["telegram_webhook"]
             if cond and not active:
                 if not rule.enabled:
                     continue
                 if self._in_cooldown(st, now, rule):
                     continue
-                await self._trigger(rule, cfg["telegram_webhook"], now, detail)
+                await self._trigger(rule, webhook, now, detail)
             elif not cond and active:
-                await self._resolve(rule.id, cfg["telegram_webhook"], now)
+                await self._resolve(rule, webhook, now)
 
-    async def _resolve_all(self, webhook: str | None, *, silent: bool) -> None:
+    async def _resolve_all(
+        self, webhook: str | None, *, silent: bool, rules: list[Rule]
+    ) -> None:
+        by_id = {r.id: r for r in rules}
         active_rules = [k for k, st in self._states.items() if st.get("active")]
         for rule_id in active_rules:
             if silent:
@@ -133,7 +170,24 @@ class AlertEngine:
                     "resolved_at": now,
                 }
             else:
-                await self._resolve(rule_id, webhook, int(time.time()))
+                rule = by_id.get(rule_id)
+                if rule is not None:
+                    await self._resolve(rule, rule.webhook or webhook, int(time.time()))
+                else:
+                    # правило удалено из конфига — закрыть в БД без уведомления
+                    now = int(time.time())
+                    await self.db.execute(
+                        "UPDATE alerts SET status = 'resolved', resolved_at = ? "
+                        "WHERE rule = ? AND status = 'active'",
+                        (now, rule_id),
+                    )
+                    await self.db.commit()
+                    prev = self._states.get(rule_id) or {}
+                    self._states[rule_id] = {
+                        "active": False,
+                        "triggered_at": prev.get("triggered_at"),
+                        "resolved_at": now,
+                    }
 
     async def _trigger(self, rule: Rule, webhook: str | None, now: int, detail: str) -> None:
         await self.db.execute(
@@ -143,26 +197,23 @@ class AlertEngine:
         await self.db.commit()
         self._states[rule.id] = {"active": True, "triggered_at": now, "resolved_at": None}
         log.warning("ALERT [%s] %s: %s", rule.level, rule.title, detail)
-        await self.notify(
-            webhook,
-            f"🚨 [{rule.level.upper()}] llm-metrics\n{rule.title}\n{detail}".rstrip("\n"),
-        )
+        await self.notify(webhook, trigger_message(rule, now, detail))
 
-    async def _resolve(self, rule_id: str, webhook: str | None, now: int) -> None:
+    async def _resolve(self, rule: Rule, webhook: str | None, now: int) -> None:
         await self.db.execute(
             "UPDATE alerts SET status = 'resolved', resolved_at = ? "
             "WHERE rule = ? AND status = 'active'",
-            (now, rule_id),
+            (now, rule.id),
         )
         await self.db.commit()
-        st = self._states.get(rule_id)
-        self._states[rule_id] = {
+        st = self._states.get(rule.id)
+        self._states[rule.id] = {
             "active": False,
             "triggered_at": st["triggered_at"] if st else None,
             "resolved_at": now,
         }
-        log.info("ALERT resolved: %s", rule_id)
-        await self.notify(webhook, f"✅ llm-metrics: «{rule_id}» — восстановлено")
+        log.info("ALERT resolved: %s", rule.id)
+        await self.notify(webhook, resolve_message(rule, now))
 
     def _in_cooldown(self, st: dict[str, Any] | None, now: int, rule: Rule) -> bool:
         if not st or st.get("resolved_at") is None:
@@ -199,7 +250,10 @@ class AlertEngine:
         # всплеск: ≥50% точек окна for_s + свежая точка в последних 120 с
         window_violation = sum(cmp(r["value"]) for r in rows) >= len(rows) / 2
         recent_violation = any(cmp(r["value"]) for r in rows if r["ts"] >= now - RECENT_S)
-        return (recent_violation and window_violation), f"{rule.metric}={last_val:g}"
+        return (
+            recent_violation and window_violation,
+            f"{rule.metric}={last_val:g} (порог {rule.value:g})",
+        )
 
     def _source_condition(self, rule: Rule, now: int) -> tuple[bool, str]:
         st = self.statuses[rule.source]

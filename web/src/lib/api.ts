@@ -377,12 +377,14 @@ export interface AlertRule {
   for_s: number;
   cooldown_s: number;
   enabled: boolean;
+  webhook: string | null;
 }
 
 export interface AlertsSettings {
   enabled: boolean;
   telegram_webhook: string;
   webhook_configured: boolean;
+  web_base_url: string;
   rules: AlertRule[];
 }
 

@@ -176,23 +176,30 @@ function AlertsSettingsCard() {
         </div>
       </div>
 
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <Input
-          value={webhook}
-          onChange={(e) => setWebhook(e.target.value)}
-          placeholder="https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<CHAT>"
-          className="min-w-72 flex-1"
-        />
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={sendTest}
-          disabled={busy != null}
-          className="gap-1.5"
-        >
-          <Send className="size-3.5" />
-          Тест
-        </Button>
+      <div className="mb-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            value={webhook}
+            onChange={(e) => setWebhook(e.target.value)}
+            placeholder="https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<CHAT>"
+            className="min-w-72 flex-1"
+          />
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={sendTest}
+            disabled={busy != null}
+            className="gap-1.5"
+          >
+            <Send className="size-3.5" />
+            Тест
+          </Button>
+        </div>
+        <p className="mt-1 text-xs text-muted">
+          {settings.web_base_url
+            ? `В уведомлениях будет ссылка на UI: ${settings.web_base_url}/alerts`
+            : "Чтобы в уведомлениях была ссылка на UI, задайте WEB_BASE_URL на сервере"}
+        </p>
       </div>
 
       <div className="overflow-x-auto">
@@ -205,7 +212,8 @@ function AlertsSettingsCard() {
               <th className="py-1 pr-2 font-normal">Условие</th>
               <th className="py-1 pr-2 font-normal">Порог</th>
               <th className="py-1 pr-2 font-normal">Длится, с</th>
-              <th className="py-1 font-normal">Пауза, с</th>
+              <th className="py-1 pr-2 font-normal">Пауза, с</th>
+              <th className="py-1 font-normal">Webhook</th>
             </tr>
           </thead>
           <tbody>
@@ -274,7 +282,7 @@ function AlertsSettingsCard() {
                     className="w-20"
                   />
                 </td>
-                <td className="py-1.5">
+                <td className="py-1.5 pr-2">
                   <Input
                     type="number"
                     size="sm"
@@ -283,6 +291,17 @@ function AlertsSettingsCard() {
                       patchRule(r.id, { cooldown_s: Math.max(0, Number(e.target.value) || 0) })
                     }
                     className="w-24"
+                  />
+                </td>
+                <td className="py-1.5">
+                  <Input
+                    size="sm"
+                    value={r.webhook ?? ""}
+                    onChange={(e) =>
+                      patchRule(r.id, { webhook: e.target.value.trim() || null })
+                    }
+                    placeholder="свой webhook (опционально)"
+                    className="w-48"
                   />
                 </td>
               </tr>

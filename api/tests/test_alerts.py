@@ -79,7 +79,7 @@ async def test_condition_true_and_fresh(db, clock):
     await insert_kv(db, [(now - 350, 95.0), (now - 60, 96.0), (now - 10, 97.0)])
     cond, detail = await eng._condition(kv_rule(), now)
     assert cond is True
-    assert detail == f"{KV}=97"
+    assert detail == f"{KV}=97 (порог 90)"
 
 
 async def test_condition_single_spike_does_not_alert(db, clock):
@@ -148,6 +148,76 @@ async def test_condition_no_data_and_stale(db, clock):
     await insert_kv(db, [(now - 900, 99.0), (now - 600, 99.0)])
     cond, _ = await eng._condition(rule, now)
     assert cond is False
+
+
+async def test_trigger_message_format(monkeypatch):
+    """trigger-сообщение: уровень (эмодзи), название, detail с порогом, время,
+    ссылка (если задан WEB_BASE_URL). Plain text, без HTML."""
+    from app.alerts.engine import resolve_message, trigger_message
+
+    rule = Rule(id="kv", title="KV-кэш > 90%", level="warning", metric=KV, op=">", value=90)
+    now = 1_700_000_000
+    detail = f"{KV}=97 (порог 90)"
+
+    monkeypatch.setenv("WEB_BASE_URL", "http://ui.test")
+    msg = trigger_message(rule, now, detail)
+    assert msg.startswith("⚠️ [WARNING] llm-metrics")
+    assert "KV-кэш > 90%" in msg
+    assert detail in msg  # порог в detail
+    assert f"Время: {time.strftime('%H:%M:%S', time.gmtime(now))} UTC" in msg
+    assert "http://ui.test/alerts" in msg
+
+    # critical — 🚨
+    crit = Rule(id="kv2", title="т", level="critical", metric=KV, op=">", value=90)
+    assert trigger_message(crit, now, "x").startswith("🚨 [CRITICAL] llm-metrics")
+
+    # resolve: название (title), не id; время; ссылка
+    rmsg = resolve_message(rule, now)
+    assert "«KV-кэш > 90%» — восстановлено" in rmsg
+    assert "Время:" in rmsg
+    assert "http://ui.test/alerts" in rmsg
+
+    # WEB_BASE_URL не задан — без ссылки
+    monkeypatch.delenv("WEB_BASE_URL", raising=False)
+    msg2 = trigger_message(rule, now, detail)
+    assert "/alerts" not in msg2
+    assert "http://" not in msg2
+
+
+async def test_per_rule_webhook_overrides_global(db, clock):
+    """Пер-rule webhook переопределяет глобальный (проверка http-клиентом-фейком)."""
+    st = SourceRegistry(("vllm", "gpu", "system"))
+    http = FakeHttp()
+    eng = make_engine(db, st, http, default_webhook="https://global.test/hook")
+    rule = Rule(
+        id="kv_pr", title="т", level="warning", metric=KV, op=">", value=90,
+        for_s=120, cooldown_s=0, webhook="https://rule.test/hook",
+    )
+    await set_alert_cfg(db, rules=[rule], telegram_webhook="https://global.test/hook")
+    now = int(clock())
+    await insert_kv(db, [(now - 150, 95.0), (now - 10, 96.0)])
+    await eng.check_once()
+    assert eng.active_count() == 1
+    assert len(http.sent) == 1
+    assert http.sent[0][0] == "https://rule.test/hook"  # webhook правила, не глобальный
+
+
+async def test_resolve_uses_title_not_id(db, clock):
+    """Resolve-сообщение использует rule.title, не rule_id."""
+    st = SourceRegistry(("vllm", "gpu", "system"))
+    st["vllm"].fail("connection refused")
+    http = FakeHttp()
+    eng = make_engine(db, st, http, default_webhook="https://example.test/hook")
+    await eng.check_once()
+    assert eng.active_count() == 1
+    st["vllm"].ok(int(clock()))
+    await eng.check_once()
+    assert eng.active_count() == 0
+    resolve_msgs = [j["text"] for _, j in http.sent if "восстановлено" in j["text"]]
+    assert len(resolve_msgs) == 1
+    assert "vLLM оффлайн" in resolve_msgs[0]      # title
+    assert "«src_vllm»" not in resolve_msgs[0]    # не rule_id
+    assert "Время:" in resolve_msgs[0]
 
 
 async def test_trigger_resolve_cooldown(db, clock):
@@ -295,6 +365,30 @@ def test_alerts_api_list_and_settings(client, db_path):
         json={"rules": [{"id": "x", "title": "t", "op": "~"}]},
     )
     assert r.status_code == 422
+
+
+def test_settings_alerts_per_rule_webhook_roundtrip(client, monkeypatch):
+    """Per-rule webhook: PUT сохраняет, GET возвращает; web_base_url в ответе."""
+    monkeypatch.setenv("WEB_BASE_URL", "http://ui.test")
+    r = client.put(
+        "/api/settings/alerts",
+        json={"rules": [
+            {"id": "a", "title": "т", "metric": "m", "op": ">",
+             "value": 1, "webhook": "https://rule.test/hook"},
+        ]},
+    )
+    assert r.status_code == 200
+    got = client.get("/api/settings/alerts").json()
+    assert got["rules"][0]["webhook"] == "https://rule.test/hook"
+    assert got["web_base_url"] == "http://ui.test"
+    # без webhook — null
+    r = client.put(
+        "/api/settings/alerts",
+        json={"rules": [{"id": "b", "title": "т"}]},
+    )
+    assert r.status_code == 200
+    got = client.get("/api/settings/alerts").json()
+    assert got["rules"][0]["webhook"] is None
 
 
 def test_alerts_test_endpoint_no_webhook(client):

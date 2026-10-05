@@ -43,6 +43,7 @@ class Rule:
     for_s: int = 120                # нарушение должно длиться
     cooldown_s: int = 3600          # пауза после восстановления
     enabled: bool = True
+    webhook: str | None = None      # per-rule Telegram-webhook (None — глобальный)
 
 
 #: Правила по умолчанию (seed и «сброс» в UI).
