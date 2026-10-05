@@ -61,10 +61,13 @@ async def health_summary(request: Request) -> dict[str, Any]:
         except Exception:  # noqa: BLE001
             counts[table] = None
 
-    # последний замер по каждому основному источнику
+    # последний замер по каждому основному источнику (точечный seek по
+    # индексу (source, ts); GROUP BY source — скан всей таблицы, ~6 с)
     last_rows = rows_to_dicts(
         await db.execute_fetchall(
-            "SELECT source, MAX(ts) AS ts FROM metric_samples GROUP BY source"
+            """SELECT 'vllm' AS source, MAX(ts) AS ts FROM metric_samples WHERE source = 'vllm'
+               UNION ALL SELECT 'gpu', MAX(ts) FROM metric_samples WHERE source = 'gpu'
+               UNION ALL SELECT 'system', MAX(ts) FROM metric_samples WHERE source = 'system'"""
         )
     )
     last_sample = {r["source"]: r["ts"] for r in last_rows}

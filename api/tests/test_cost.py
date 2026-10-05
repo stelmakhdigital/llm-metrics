@@ -45,6 +45,23 @@ def _rate(ts, **kw):
     return v
 
 
+def _tokens(db_path, rows):
+    """Строки агрегата tokens (почасовые дельты счётчиков vLLM).
+
+    Cost engine берёт токены/запросы только из этой таблицы (сырые
+    счётчики в metric_samples больше не сканирует — perf).
+    """
+    c = sqlite3.connect(str(db_path))
+    for ts, p, comp, req in rows:
+        c.execute(
+            "INSERT INTO tokens (ts, prompt_tokens, completion_tokens, requests_finished) "
+            "VALUES (?, ?, ?, ?)",
+            (ts, p, comp, req),
+        )
+    c.commit()
+    c.close()
+
+
 # ------------------------------------------------------------------ электричество
 
 
@@ -192,17 +209,7 @@ def test_electricity_hourly_fallback_multigpu(client, db_path):
 
 def test_tokens_raw_1m(client, db_path):
     """1M prompt + 1M completion → tokens_cost = 0.5 + 1.5 $ (тарифы из конфига)."""
-    seed_samples(
-        db_path,
-        [
-            ("prompt_tokens_total", T, 0.0, "vllm", None, "m1"),
-            ("prompt_tokens_total", T + 3600, 1_000_000.0, "vllm", None, "m1"),
-            ("generation_tokens_total", T, 0.0, "vllm", None, "m1"),
-            ("generation_tokens_total", T + 3600, 1_000_000.0, "vllm", None, "m1"),
-            ("request_success_total_stop", T, 0.0, "vllm", None, "m1"),
-            ("request_success_total_stop", T + 3600, 42.0, "vllm", None, "m1"),
-        ],
-    )
+    _tokens(db_path, [(T, 1_000_000, 1_000_000, 42)])
     body = client.get("/api/cost", params={"from": T, "to": T + 3600}).json()
     assert body["tokens_cost"] == pytest.approx(0.5 + 1.5, **APPROX)
     assert body["prompt_tokens_cost"] == pytest.approx(0.5, **APPROX)
@@ -219,14 +226,7 @@ def test_total_sum_of_hour_increments_not_day_running_total(client, db_path):
     """Регрессия (F7): total — сумма почасовых приростов, а не сумма
     нарастающих итогов дня (на день с >1ч данных «стоимость за период»
     была завышена в разы: cum += dd_total каждый час)."""
-    seed_samples(
-        db_path,
-        [
-            ("prompt_tokens_total", T, 0.0, "vllm", None, "m1"),
-            ("prompt_tokens_total", T + 3600, 1_000_000.0, "vllm", None, "m1"),
-            ("prompt_tokens_total", T + 7200, 2_000_000.0, "vllm", None, "m1"),
-        ],
-    )
+    _tokens(db_path, [(T, 1_000_000, 0, 0), (T + 3600, 1_000_000, 0, 0)])
     body = client.get("/api/cost", params={"from": T, "to": T + 7200}).json()
     assert body["tokens_cost"] == pytest.approx(1.0, **APPROX)
     assert body["total"] == pytest.approx(1.0, **APPROX)
@@ -236,18 +236,11 @@ def test_total_sum_of_hour_increments_not_day_running_total(client, db_path):
     assert body["cumulative"][-1][1] == pytest.approx(1.0, **APPROX)
 
 
-def test_tokens_counter_cross_hour_boundary(client, db_path):
-    """Граничные потери счётчиков: прирост «последняя точка прошлого часа →
-    первая точка текущего» не теряется (prev — из предыдущего бакета).
-    Точки (T-5, 100), (T+5, 200), (T+3605, 300) → сумма дельт = 200."""
-    seed_samples(
-        db_path,
-        [
-            ("prompt_tokens_total", T - 5, 100.0, "vllm", None, "m1"),
-            ("prompt_tokens_total", T + 5, 200.0, "vllm", None, "m1"),
-            ("prompt_tokens_total", T + 3_605, 300.0, "vllm", None, "m1"),
-        ],
-    )
+def test_tokens_cross_hour_boundary(client, db_path):
+    """Сумма дельт по часам: 100 + 100 = 200 токенов (двух часов подряд).
+    Граничные потери сырых счётчиков обрабатывает агрегатор, пишущий
+    таблицу tokens, — здесь проверяем только суммирование по часам."""
+    _tokens(db_path, [(T, 100, 0, 0), (T + 3600, 100, 0, 0)])
     body = client.get("/api/cost", params={"from": T - 3_600, "to": T + 7_200}).json()
     assert body["prompt_tokens"] == 200
     assert body["tokens_cost"] == pytest.approx(200 * 0.5 / 1_000_000, rel=1e-6)
@@ -271,15 +264,7 @@ def test_tokens_hourly_partial_hour_prorated(client, db_path):
 
 def test_zero_completion_null_unit_costs(client, db_path):
     """completion = 0 → per_1k_out_tok = null; requests = 0 → per_request = null."""
-    seed_samples(
-        db_path,
-        [
-            ("prompt_tokens_total", T, 0.0, "vllm", None, "m1"),
-            ("prompt_tokens_total", T + 3600, 1_000_000.0, "vllm", None, "m1"),
-            ("generation_tokens_total", T, 0.0, "vllm", None, "m1"),
-            ("generation_tokens_total", T + 3600, 0.0, "vllm", None, "m1"),
-        ],
-    )
+    _tokens(db_path, [(T, 1_000_000, 0, 0)])
     body = client.get("/api/cost", params={"from": T, "to": T + 3600}).json()
     assert body["tokens_cost"] == pytest.approx(0.5, **APPROX)
     assert body["completion_tokens"] == 0
@@ -295,17 +280,7 @@ def test_rate_versioning_mid_period(client, db_path):
     (тариф считается на середину часа: смена на T+1801 попадает во 2-й час)."""
     _settings(db_path, [_rate(T, token_prompt_per_million_usd=0.5),
                         _rate(T + 1801, token_prompt_per_million_usd=1.0)])
-    seed_samples(
-        db_path,
-        [
-            ("prompt_tokens_total", T, 0.0, "vllm", None, "m1"),
-            ("prompt_tokens_total", T + 3600, 1_000_000.0, "vllm", None, "m1"),
-            ("prompt_tokens_total", T + 7200, 2_000_000.0, "vllm", None, "m1"),
-            ("generation_tokens_total", T, 0.0, "vllm", None, "m1"),
-            ("generation_tokens_total", T + 3600, 0.0, "vllm", None, "m1"),
-            ("generation_tokens_total", T + 7200, 0.0, "vllm", None, "m1"),
-        ],
-    )
+    _tokens(db_path, [(T, 1_000_000, 0, 0), (T + 3600, 1_000_000, 0, 0)])
     body = client.get("/api/cost", params={"from": T, "to": T + 7200}).json()
     # 1-й час — ставка 0.5 $/1M, 2-й (смена после середины часа T) — 1.0 $/1M
     assert body["tokens_cost"] == pytest.approx(0.5 + 1.0, **APPROX)
@@ -318,15 +293,7 @@ def test_rate_midpoint_applies_new_version(client, db_path):
     новому (midpoint) тарифу."""
     _settings(db_path, [_rate(T, token_prompt_per_million_usd=0.5),
                         _rate(T + 1800, token_prompt_per_million_usd=1.0)])
-    seed_samples(
-        db_path,
-        [
-            ("prompt_tokens_total", T, 0.0, "vllm", None, "m1"),
-            ("prompt_tokens_total", T + 3600, 1_000_000.0, "vllm", None, "m1"),
-            ("generation_tokens_total", T, 0.0, "vllm", None, "m1"),
-            ("generation_tokens_total", T + 3600, 0.0, "vllm", None, "m1"),
-        ],
-    )
+    _tokens(db_path, [(T, 1_000_000, 0, 0)])
     body = client.get("/api/cost", params={"from": T, "to": T + 3600}).json()
     assert body["tokens_cost"] == pytest.approx(1.0, **APPROX)
     assert body["prompt_tokens"] == 1_000_000

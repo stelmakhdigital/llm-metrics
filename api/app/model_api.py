@@ -81,46 +81,51 @@ def _counter_delta(
 async def _first_last(
     db, from_: int, to: int, model: str | None = None
 ) -> dict[str, tuple[float, float]]:
-    """{metric: (первое значение, последнее значение)} в [from, to].
+    """{metric: (первое значение, последнее значение)} в [from, to] — только
+    метрики счётчиков (finish reasons, buckets, preemptions, prefix).
 
-    Одна сканирующая выборка (MIN/MAX ts по метрике) + значения точечными
-    запросами по индексу (metric, ts) — без повторного полного скана
-    (ранее: два полных скана по MIN и по MAX, ~2× время ответа /api/model).
+    Точечные запросы по индексу (metric, ts): имена — одной короткой
+    выборкой за последний час, значения — first/last LIMIT 1 по метрике
+    (~200 запросов по ~0.1 мс). Любой скан 700k+ строк счётчиков за 24 ч
+    — 1–4 с (issue perf).
     """
     mfilter = " AND model = ?" if model else ""
-    mparams = [from_, to, *([model] if model else [])]
+    mparam = [model] if model else []
     rows = rows_to_dicts(
         await db.execute_fetchall(
-            f"""SELECT metric, MIN(ts) AS fts, MAX(ts) AS lts
-               FROM metric_samples
+            f"""SELECT DISTINCT metric FROM metric_samples
                WHERE ts >= ? AND ts <= ?{mfilter}
-               GROUP BY metric""",
-            mparams,
+                 AND (metric LIKE 'request_success_total_%'
+                      OR metric LIKE 'request_prompt_tokens_bucket_%'
+                      OR metric LIKE 'request_generation_tokens_bucket_%'
+                      OR metric IN ('num_preemptions_total',
+                                    'prefix_cache_hits_total',
+                                    'prefix_cache_queries_total'))""",
+            [to - 3600, to, *mparam],
         )
     )
-    bounds: dict[str, tuple[int, int]] = {
-        r["metric"]: (r["fts"], r["lts"]) for r in rows
-    }
-    if not bounds:
+    if not rows:
         return {}
-
-    async def _values(pairs: list[tuple[str, int]]) -> dict[str, float]:
-        if not pairs:
-            return {}
-        conds = " OR ".join(["(metric = ? AND ts = ?)"] * len(pairs))
-        params = [x for m, t in pairs for x in (m, t)]
-        rr = rows_to_dicts(
+    out: dict[str, tuple[float, float]] = {}
+    for r in rows:
+        m = r["metric"]
+        f = rows_to_dicts(
             await db.execute_fetchall(
-                f"SELECT metric, value FROM metric_samples WHERE {conds}", params
+                f"SELECT value FROM metric_samples WHERE metric = ? "
+                f"AND ts >= ? AND ts <= ?{mfilter} ORDER BY ts LIMIT 1",
+                [m, from_, to, *mparam],
             )
         )
-        return {r["metric"]: r["value"] for r in rr}
-
-    first = await _values([(m, b[0]) for m, b in bounds.items()])
-    last = await _values([(m, b[1]) for m, b in bounds.items()])
-    return {
-        m: (first[m], last[m]) for m in bounds if m in first and m in last
-    }
+        l = rows_to_dicts(
+            await db.execute_fetchall(
+                f"SELECT value FROM metric_samples WHERE metric = ? "
+                f"AND ts >= ? AND ts <= ?{mfilter} ORDER BY ts DESC LIMIT 1",
+                [m, from_, to, *mparam],
+            )
+        )
+        if f and l and f[0]["value"] is not None and l[0]["value"] is not None:
+            out[m] = (f[0]["value"], l[0]["value"])
+    return out
 
 
 async def _model_segments(
@@ -166,19 +171,23 @@ async def _model_segments(
 
 async def _raw_points(
     db, metrics: tuple[str, ...], from_: int, to: int, model: str | None = None
-) -> list[float]:
-    """Все сырые значения метрик в периоде (одним списком)."""
+) -> dict[str, list[float]]:
+    """Все сырые значения метрик в периоде, по метрикам (одна выборка)."""
     ph = ",".join("?" * len(metrics))
     mfilter = " AND model = ?" if model else ""
     params = [*metrics, from_, to, *([model] if model else [])]
     rows = rows_to_dicts(
         await db.execute_fetchall(
-            f"SELECT value FROM metric_samples "
+            f"SELECT metric, value FROM metric_samples "
             f"WHERE metric IN ({ph}) AND ts >= ? AND ts <= ?" + mfilter,
             params,
         )
     )
-    return [r["value"] for r in rows if r["value"] is not None]
+    out: dict[str, list[float]] = {m: [] for m in metrics}
+    for r in rows:
+        if r["value"] is not None:
+            out[r["metric"]].append(r["value"])
+    return out
 
 
 async def _hourly_stats(
@@ -268,22 +277,30 @@ async def build_model_response(
 
     span = to - from_
     if span <= RAW_SPAN_S:
-        # --- средние rates по сырым точкам
-        for key, metric in (
-            ("prompt_rate", "prompt_tokens_rate"),
-            ("gen_rate", "generation_tokens_rate"),
-        ):
-            pts = await _raw_points(db, (metric,), from_, to, model)
-            kpi[key] = sum(pts) / len(pts) if pts else None
-
-        # --- квантили по точкам сырых квантилей (отдельные серии)
-        for key, base in (("ttft", "ttft"), ("tpot", "tpot")):
-            p50_pts = await _raw_points(db, (f"{base}_p50",), from_, to, model)
-            p95_pts = await _raw_points(db, (f"{base}_p95",), from_, to, model)
-            kpi[f"{key}_p50"] = quantile_sorted(p50_pts, 0.50)
-            kpi[f"{key}_p95"] = quantile_sorted(p95_pts, 0.95)
-        e2e_pts = await _raw_points(db, ("e2e_latency_p95",), from_, to, model)
-        kpi["e2e_p95"] = quantile_sorted(e2e_pts, 0.95)
+        # --- средние rates + квантили: одна сырая выборка на все 7 метрик
+        pts = await _raw_points(
+            db,
+            (
+                "prompt_tokens_rate",
+                "generation_tokens_rate",
+                "ttft_p50",
+                "ttft_p95",
+                "tpot_p50",
+                "tpot_p95",
+                "e2e_latency_p95",
+            ),
+            from_,
+            to,
+            model,
+        )
+        pr, gr = pts["prompt_tokens_rate"], pts["generation_tokens_rate"]
+        kpi["prompt_rate"] = sum(pr) / len(pr) if pr else None
+        kpi["gen_rate"] = sum(gr) / len(gr) if gr else None
+        kpi["ttft_p50"] = quantile_sorted(pts["ttft_p50"], 0.50)
+        kpi["ttft_p95"] = quantile_sorted(pts["ttft_p95"], 0.95)
+        kpi["tpot_p50"] = quantile_sorted(pts["tpot_p50"], 0.50)
+        kpi["tpot_p95"] = quantile_sorted(pts["tpot_p95"], 0.95)
+        kpi["e2e_p95"] = quantile_sorted(pts["e2e_latency_p95"], 0.95)
     else:
         # --- период >24ч: hourly (avg-колонка для p50/rates, p95-колонка для p95)
         kpi["prompt_rate"] = await _hourly_stats(db, "prompt_tokens_rate", from_, to, "avg", model)

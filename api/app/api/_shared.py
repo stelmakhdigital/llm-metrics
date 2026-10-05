@@ -52,20 +52,28 @@ def _db(request: Request):
 
 
 async def last_values(
-    request: Request, metrics: tuple[str, ...]
+    request: Request, metrics: tuple[str, ...], window_s: int = 7200
 ) -> dict[tuple[str, int | None], tuple[int, float]]:
-    """Последние (ts, value) по метрикам; gpu-метрики — по каждой gpu."""
+    """Последние (ts, value) по метрикам; gpu-метрики — по каждой gpu.
+
+    Окно ``window_s`` — только свежие выборки: под-запрос MAX(ts) идёт по
+    индексу (metric, ts) только в пределах окна (без окна — скан всей
+    истории метрики, ~2 с на 28 метрик). Источник, молчащий дольше окна,
+    отдаёт null — в статусе он и так offline (STALE = 180 с).
+    """
     db = _db(request)
     ph = ",".join("?" * len(metrics))
+    since = int(time.time()) - window_s
     rows = rows_to_dicts(
         await db.execute_fetchall(
             f"""SELECT s.metric, s.gpu, s.ts, s.value
                 FROM metric_samples s
                 JOIN (SELECT metric, COALESCE(gpu, -1) AS g, MAX(ts) AS mt
-                      FROM metric_samples WHERE metric IN ({ph})
+                      FROM metric_samples
+                      WHERE metric IN ({ph}) AND ts >= ?
                       GROUP BY metric, COALESCE(gpu, -1)) m
                 ON s.metric = m.metric AND COALESCE(s.gpu, -1) = m.g AND s.ts = m.mt""",
-            list(metrics),
+            [*metrics, since],
         )
     )
     out: dict[tuple[str, int | None], tuple[int, float]] = {}
@@ -118,11 +126,14 @@ async def _aggregate_series(
 
 
 async def _latest_model(request: Request) -> str | None:
+    # Окно 1 ч — под (source, ts) индекс: модель не меняется чаще, чем
+    # за час, а без окна — полный скан metric_samples по ts (~1.4 с).
     rows = rows_to_dicts(
         await _db(request).execute_fetchall(
             """SELECT model FROM metric_samples
-               WHERE source = 'vllm' AND model IS NOT NULL
-               ORDER BY ts DESC LIMIT 1"""
+               WHERE source = 'vllm' AND model IS NOT NULL AND ts >= ?
+               ORDER BY ts DESC LIMIT 1""",
+            (int(time.time()) - 3600,),
         )
     )
     return rows[0]["model"] if rows else None

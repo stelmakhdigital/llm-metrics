@@ -67,14 +67,17 @@ async def gpus(request: Request, live: bool = Query(False)) -> dict[str, Any]:
 async def system(request: Request) -> dict[str, Any]:
     """Снимок системы (последние выборки poller'а) — единый формат с SSE-пакетом live."""
     db = _db(request)
+    # Под (source, ts) индекс; окно 2 ч — источник, молчащий дольше,
+    # и так offline (STALE = 180 с)
     rows = rows_to_dicts(
         await db.execute_fetchall(
-            """SELECT metric, ts, value FROM metric_samples
-               WHERE source = 'system' AND ts = (
-                 SELECT MAX(ts) FROM metric_samples
-                 WHERE source = 'system' AND metric = metric_samples.metric
-               )
-               ORDER BY metric"""
+            """SELECT s.metric, s.value FROM metric_samples s
+               JOIN (SELECT metric, MAX(ts) AS mt FROM metric_samples
+                     WHERE source = 'system' AND ts >= ?
+                     GROUP BY metric) m
+               ON s.metric = m.metric AND s.ts = m.mt
+               ORDER BY s.metric""",
+            (int(time.time()) - 7200,),
         )
     )
     latest = {r["metric"]: r["value"] for r in rows}
