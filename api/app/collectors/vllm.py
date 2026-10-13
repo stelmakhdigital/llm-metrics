@@ -292,7 +292,11 @@ class VllmCollector:
             for name in candidates:
                 b = metrics.get(name + "_bucket")
                 if b is not None and b.series:
-                    buckets = []
+                    # несколько engine — сумма counts по одинаковому le
+                    # (как в _series_sum и для TOKEN_BUCKET_METRICS ниже):
+                    # иначе interleaved buckets разных engine не монотонны
+                    # и квантиль по ним неверен
+                    by_le: dict[float, float] = {}
                     for s in b.series:
                         le = s.labels.get("le")
                         if le is None or s.value is None:
@@ -301,7 +305,8 @@ class VllmCollector:
                             le_f = float("inf") if le == "+Inf" else float(le)
                         except ValueError:
                             continue
-                        buckets.append((le_f, s.value))
+                        by_le[le_f] = by_le.get(le_f, 0.0) + s.value
+                    buckets = sorted(by_le.items()) if by_le else None
                     if buckets:
                         break
             if not buckets:

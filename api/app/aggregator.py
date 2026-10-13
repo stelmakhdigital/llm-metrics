@@ -190,8 +190,9 @@ class Aggregator:
                     continue
                 s = rows_to_dicts(
                     await self.conn.execute_fetchall(
-                        f"""SELECT avg(avg) AS av, min(min) AS mn, max(max) AS mx,
-                                   avg(p95) AS p95, sum(avg * count) AS sm, sum(count) AS ct
+                        f"""SELECT min(min) AS mn, max(max) AS mx,
+                                   SUM(avg * count) AS sm, SUM(count) AS ct,
+                                   SUM(p95 * count) AS p95w
                            FROM metric_hourly WHERE metric = ? AND hour >= ? AND hour < ?{gcond}{mcond}""",
                         (row["metric"], day, day + 86400, *gparams, *mparams),
                     )
@@ -202,8 +203,8 @@ class Aggregator:
                     """INSERT INTO metric_daily
                          (metric, day, gpu, model, avg, min, max, p95, sum, count)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (row["metric"], day, gpu, model, s["av"], s["mn"], s["mx"],
-                     s["p95"], s["sm"], s["ct"]),
+                    (row["metric"], day, gpu, model, s["sm"] / s["ct"], s["mn"], s["mx"],
+                     s["p95w"] / s["ct"], s["sm"], s["ct"]),
                 )
                 written += 1
         await self.conn.commit()
