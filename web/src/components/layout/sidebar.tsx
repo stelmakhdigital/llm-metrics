@@ -52,7 +52,8 @@ function NavItem({ href, label, icon: Icon }: (typeof NAV)[number]) {
   );
 }
 
-/** Мобильный пункт нижней панели: touch-target ≥ 40px (M5). */
+/** Мобильный пункт нижней панели: touch-target ≥ 40px (M5); min-w-0 —
+ * чтобы 10 пунктов сжимались на экранах <400px вместо переполнения. */
 function NavItemMobile({ href, label, icon: Icon }: (typeof NAV)[number]) {
   const active = usePathname() === href;
   return (
@@ -60,12 +61,12 @@ function NavItemMobile({ href, label, icon: Icon }: (typeof NAV)[number]) {
       href={href}
       aria-label={label}
       className={cn(
-        "flex min-h-12 min-w-10 flex-1 flex-col items-center justify-center gap-0.5 py-1",
+        "flex min-h-12 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 px-0.5 py-1",
         active ? "text-accent" : "text-muted",
       )}
     >
-      <Icon className="size-5" />
-      <span className="text-[10px] leading-none">{label}</span>
+      <Icon className="size-5 shrink-0" />
+      <span className="max-w-full truncate text-[10px] leading-none">{label}</span>
     </Link>
   );
 }
