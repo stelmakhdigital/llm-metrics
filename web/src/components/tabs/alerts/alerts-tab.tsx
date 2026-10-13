@@ -20,7 +20,7 @@ import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { fmtAgo, fmtTimeS } from "@/lib/format";
 import { useRefresh } from "@/lib/refresh";
-import { ErrorBanner, InfoBanner } from "../common";
+import { ErrorBanner } from "../common";
 import { cn } from "@/lib/utils";
 
 function levelBadge(level: string) {
@@ -77,6 +77,7 @@ function AlertsSettingsCard() {
   const [enabled, setEnabled] = useState(true);
   const [busy, setBusy] = useState<null | "save" | "test" | "reset">(null);
   const [status, setStatus] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     if (settings && !draft) {
@@ -88,9 +89,12 @@ function AlertsSettingsCard() {
 
   const load = () =>
     fetchJson<AlertsSettings>(ALERTS_SETTINGS_URL)
-      .then(setSettings)
+      .then((s) => {
+        setSettings(s);
+        setLoadError(null);
+      })
       .catch((e: unknown) =>
-        setStatus({ kind: "err", text: e instanceof Error ? e.message : "Ошибка API" }),
+        setLoadError(e instanceof Error ? e.message : "Ошибка API"),
       );
   const [tick, setTick] = useState(0);
   const { tick: refreshTick } = useRefresh();
@@ -157,6 +161,26 @@ function AlertsSettingsCard() {
       setBusy(null);
     }
   };
+
+  if (loadError != null) {
+    return (
+      <div className="rounded-xl border border-line bg-panel p-4">
+        <div className="mb-2 text-sm font-medium">Настройки алертов</div>
+        <div className="text-sm text-red-400">Ошибка API: {loadError}</div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="mt-2"
+          onClick={() => {
+            setLoadError(null);
+            load();
+          }}
+        >
+          Повторить
+        </Button>
+      </div>
+    );
+  }
 
   if (!settings || !draft) {
     return (
@@ -390,9 +414,6 @@ export function AlertsTab() {
   return (
     <div className="space-y-3">
       {error != null && <ErrorBanner message={error} />}
-      {!data && !loading && (
-        <InfoBanner message="Нет данных (бэк оффлайн?)." />
-      )}
       {data != null ? (
         <>
           <h2 className="text-sm font-medium text-muted">Активные алерты</h2>
@@ -401,9 +422,9 @@ export function AlertsTab() {
           <h2 className="pt-1 text-sm font-medium text-muted">Журнал (последние 100)</h2>
           <AlertsJournal data={data} />
         </>
-      ) : (
+      ) : loading ? (
         <div className="h-40 animate-pulse rounded-xl border border-line bg-panel2" />
-      )}
+      ) : null}
     </div>
   );
 }
