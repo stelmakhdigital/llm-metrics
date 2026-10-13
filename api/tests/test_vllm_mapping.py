@@ -217,3 +217,30 @@ def test_token_bucket_counters_stored():
     assert snap["metrics"]["num_requests_running"] == 2.0
     # сырые bucket-счётчики в снимок не попадают
     assert "request_prompt_tokens_bucket_16" not in snap["metrics"]
+
+
+def test_histogram_percentiles_multi_engine():
+    """p50/p95 histogram-ов: несколько engine — сумма counts по le
+    (как для гейджей/счётчиков/bucket-счётчиков); иначе interleaved
+    buckets разных engine не монотонны и квантиль неверен."""
+    import asyncio
+
+    # engine 0: (0.5,40) (1.0,100) (+Inf,101); engine 1: (0.5,60) (1.0,150) (+Inf,152)
+    # сумма: (0.5,100) (1.0,250) (+Inf,253)
+    text = (
+        'vllm:num_requests_running{model_name="m"} 1.0\n'
+        'vllm:time_to_first_token_seconds_bucket{engine="0",le="0.5",model_name="m"} 40.0\n'
+        'vllm:time_to_first_token_seconds_bucket{engine="0",le="1.0",model_name="m"} 100.0\n'
+        'vllm:time_to_first_token_seconds_bucket{engine="0",le="+Inf",model_name="m"} 101.0\n'
+        'vllm:time_to_first_token_seconds_bucket{engine="1",le="0.5",model_name="m"} 60.0\n'
+        'vllm:time_to_first_token_seconds_bucket{engine="1",le="1.0",model_name="m"} 150.0\n'
+        'vllm:time_to_first_token_seconds_bucket{engine="1",le="+Inf",model_name="m"} 152.0\n'
+    )
+    col = VllmCollector(VllmSource())
+    samples = asyncio.run(col.poll(FakeClient(text), now=1_700_000_000))
+    m = by_metric(samples)
+    # p95: доля 0.95*253 = 240.35 → bucket (0.5, 1.0):
+    # 0.5 + 0.5*(240.35-100)/150 = 0.96783
+    assert m["ttft_p95"].value == pytest.approx(0.5 + 0.5 * (0.95 * 253 - 100) / 150)
+    # p50: доля 126.5 → 0.5 + 0.5*(126.5-100)/150 = 0.58833
+    assert m["ttft_p50"].value == pytest.approx(0.5 + 0.5 * (126.5 - 100) / 150)
