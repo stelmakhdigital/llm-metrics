@@ -38,3 +38,18 @@ def test_url_env_with_inline_comment(clean_env, monkeypatch):
     monkeypatch.setenv("VLLM_URL", "http://host.docker.internal:8000 # host vllm")
     cfg = load_config()
     assert cfg.sources.vllm.url == "http://host.docker.internal:8000"
+
+
+def test_source_type_default_and_maya(clean_env, monkeypatch):
+    # дефолт — vllm
+    cfg = load_config()
+    assert cfg.sources.vllm.source_type == "vllm"
+    monkeypatch.setenv("VLLM_SOURCE_TYPE", "maya")
+    cfg = load_config()
+    assert cfg.sources.vllm.source_type == "maya"
+
+
+def test_source_type_invalid(clean_env, monkeypatch):
+    monkeypatch.setenv("VLLM_SOURCE_TYPE", "prometheus")
+    with pytest.raises(RuntimeError, match="VLLM_SOURCE_TYPE"):
+        load_config()

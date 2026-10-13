@@ -18,6 +18,9 @@ class VllmSource(BaseModel):
     url: str = "http://127.0.0.1:8000"
     metrics_path: str = "/metrics"
     poll_seconds: float = 5
+    # Тип сервера на ``url``: vLLM (Prometheus /metrics) или Project Maya
+    # (JSON /metrics, конвертер app.collectors.maya)
+    source_type: Literal["vllm", "maya"] = "vllm"
     # Необязательная статичная подпись модели; иначе берётся из лейблов model_name
     model_name: str | None = None
     request_timeout: float = 5
@@ -195,6 +198,11 @@ def load_config() -> AppConfig:
             "VLLM_URL не задана: укажите адрес vLLM-сервера, "
             "например VLLM_URL=http://vllm:8000"
         )
+    source_type = _env("VLLM_SOURCE_TYPE", "vllm").strip().lower()
+    if source_type not in ("vllm", "maya"):
+        raise RuntimeError(
+            f"VLLM_SOURCE_TYPE={source_type!r}: ожидалось vllm или maya"
+        )
     daily_days = _env("RETENTION_DAILY_DAYS").strip()
 
     return AppConfig(
@@ -203,6 +211,7 @@ def load_config() -> AppConfig:
                 url=vllm_url,
                 metrics_path=_env("VLLM_METRICS_PATH", "/metrics"),
                 poll_seconds=_env_float("VLLM_POLL_S", 5),
+                source_type=source_type,
                 model_name=_env("VLLM_MODEL_NAME") or None,
                 request_timeout=_env_float("VLLM_TIMEOUT_S", 5),
             ),

@@ -11,6 +11,7 @@
 | **vLLM** | | |
 | `VLLM_URL` | — (обязателен) | URL vLLM. vLLM на хосте: `http://host.docker.internal:8000` (скрипт vLLM обязан слушать `0.0.0.0`, а не `127.0.0.1` — loopback хоста из контейнеров не виден) |
 | `VLLM_METRICS_PATH` | `/metrics` | путь Prometheus-эндпоинта |
+| `VLLM_SOURCE_TYPE` | `vllm` | тип сервера на `VLLM_URL`: `vllm` или `maya` (Project Maya — JSON `/metrics`, см. раздел «Maya (не vLLM)») |
 | `VLLM_POLL_S` | 5 | период опроса vLLM, с |
 | `VLLM_MODEL_NAME` | из `/v1/models` | метка модели для истории (фильтр «Модель»); обычно не нужен |
 | `VLLM_TIMEOUT_S` | 5 | таймаут запросов к vLLM, с |
@@ -140,6 +141,54 @@ exec python -m vllm.entrypoints.openai.api_server \
   --gpu-memory-utilization 0.90 \
   --host 0.0.0.0 --port 8000
 ```
+
+## Maya (не vLLM)
+
+Project Maya — свой движок (`build/strata`, форк llama.cpp) под GLM-5.3-Flash;
+перед ним стоит Python-сервер (`serve/server.py`, OpenAI-совместимый API +
+дашборд). Мониторинг поддерживает его нативно: `VLLM_SOURCE_TYPE=maya` в `.env`,
+
+```env
+VLLM_URL=http://host.docker.internal:8080
+VLLM_SOURCE_TYPE=maya
+```
+
+Опрос и хранение идут тем же пайплайном, что и vLLM: коллектор конвертирует
+JSON-снимок `/metrics` в те же логические метрики (`api/app/collectors/maya.py`)
+и дальше всё без изменений (rates, rolling-окна, hourly/daily-агрегаты,
+фильтр «Модель»). Метка модели берётся из `engine.model` снимка.
+
+Запуск на хосте — обёрткой `scripts/maya-host.sh` (`make maya-start/stop/status`):
+
+```env
+MAYA_SCRIPT=/home/arkalaust/Code/project-maya/run-maya-maya-s-v2-iq2_xxs.sh
+MAYA_LOG_DIR=/mnt/storage/maya
+MAYA_EXTRA_ARGS=--host 0.0.0.0   # обязателен: api в docker ходит через host.docker.internal
+```
+
+Лог для вкладки «Логи»: nohup пишет в `MAYA_LOG_DIR/maya.log`; bind
+`${VLLM_LOG_DIR}:/var/log/vllm:ro` в compose монтирует каталог целиком, поэтому
+достаточно `LOG_SOURCE_NAME=maya` и `LOG_SOURCE_PATH=/var/log/vllm/maya.log`
+(без правок compose).
+
+Маппинг метрик maya → логические имена:
+
+| maya (JSON) | метрика |
+|---|---|
+| `live.active` / `live.queued` | `num_requests_running` / `num_requests_waiting` |
+| `tiers.now.vram_used / vram_slots` | `kv_cache_usage` (занятость экспертного кэша — ближайший аналог kv_cache vLLM) |
+| `totals.prompt_tokens` / `totals.output_tokens` | сырые счётчики токенов → rates |
+| `totals.reused` | `prefix_cache_hits_total` |
+| `totals.prompt_tokens` (прокси) | `prefix_cache_queries_total` — счётчика lookups в maya нет; hit-rate = reused/prompt_tokens, заниженная, но устойчивая оценка |
+| окно `requests` (последние ~500 завершённых) | histogram'ы: ttft ← `prompt_ms`, tpot ← `decode_ms/output_tokens`, e2e ← `duration_s`; p50/p95 — интерполяция по buckets, пересчитываются каждый опрос |
+| окно `requests` | bucket'ы длин `request_{prompt,generation}_tokens_bucket_{le}` |
+
+Чего в maya нет — соответствующие серии UI просто не получают точек (пропуски
+данных — разрывы, см. инварианты): `num_preemptions`, finish reasons
+(`request_success_total_*`), `queue_time`, квантили считаются по окну
+последних запросов, а не по полной истории.
+
+Пример снимка `/metrics` (для тестов) — `docs/maya-metrics-sample.json`.
 
 ## Частые настройки
 

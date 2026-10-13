@@ -12,11 +12,17 @@ VERSION  ?= $(shell v=$$(git describe --tags 2>/dev/null | sed 's/^v//; s/-.*//'
 # Пути обёртки vLLM на хосте — из .env (пример: .env.example)
 VLLM_SCRIPT  ?= $(HOME)/bin/work-fp8.sh
 VLLM_LOG_DIR ?= /mnt/storage/vllm
+# Project Maya (хост-скрипт запуска; см. scripts/maya-host.sh):
+MAYA_SCRIPT ?= $(HOME)/Code/project-maya/run-maya-maya-s-v2-iq2_xxs.sh
+MAYA_LOG_DIR ?= /mnt/storage/maya
+# maya.py обязан слушать 0.0.0.0 (api в docker ходит через host.docker.internal):
+MAYA_EXTRA_ARGS ?= --host 0.0.0.0
 -include .env
 
 .PHONY: setup dev-api dev-web mock-vllm test-api alembic
 .PHONY: start down rebuild logs ps mock-start mock-down build build-bg install install-toolkit gpu-check all tag
-.PHONY: vllm-start vllm-stop vllm-status vllm-logs install-logrotate install-backup
+.PHONY: vllm-start vllm-stop vllm-status vllm-logs maya-start maya-stop maya-status maya-logs
+.PHONY: install-logrotate install-backup
 
 # venv + зависимости API
 setup:
@@ -123,6 +129,25 @@ vllm-status:
 # Хвост лога vLLM
 vllm-logs:
 	tail -n 100 $(VLLM_LOG_DIR)/vllm.log
+
+# ---- Project Maya на хосте (обёртка scripts/maya-host.sh над run-maya-*.sh) ----
+# Maya — не vLLM: свой движок (build/strata) + Python-сервер serve/server.py.
+# Метрики api берёт с его /metrics (JSON) при VLLM_SOURCE_TYPE=maya в .env.
+# Поднять maya (nohup, лог → $(MAYA_LOG_DIR)/maya.log; уже запущен — не тронет).
+# maya.py обязан слушать 0.0.0.0: MAYA_EXTRA_ARGS="--host 0.0.0.0" в .env
+# (или пропишите --host 0.0.0.0 в run-скрипте).
+maya-start:
+	MAYA_SCRIPT=$(MAYA_SCRIPT) MAYA_LOG_DIR=$(MAYA_LOG_DIR) MAYA_EXTRA_ARGS="$(MAYA_EXTRA_ARGS)" ./scripts/maya-host.sh start
+
+maya-stop:
+	MAYA_SCRIPT=$(MAYA_SCRIPT) MAYA_LOG_DIR=$(MAYA_LOG_DIR) ./scripts/maya-host.sh stop
+
+maya-status:
+	MAYA_SCRIPT=$(MAYA_SCRIPT) MAYA_LOG_DIR=$(MAYA_LOG_DIR) ./scripts/maya-host.sh status
+
+# Хвост лога maya
+maya-logs:
+	tail -n 100 $(MAYA_LOG_DIR)/maya.log
 
 # logrotate хост-лога vLLM (100M×4, copytruncate; путь подставится из .env)
 install-logrotate:

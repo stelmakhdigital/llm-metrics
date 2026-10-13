@@ -4,6 +4,10 @@
 (без prometheus_client) и маппинг **логическое имя → кандидаты имён метрик**,
 чтобы переживать апгрейды vLLM (ТЗ §10 прим. 1).
 
+``cfg.source_type == "maya"`` — тот же опрос, но тело — JSON Project Maya
+(свой сервер перед движком strata); конвертация в те же логические метрики
+— :func:`app.collectors.maya.maya_to_metrics` (см. docs/CONFIG.md).
+
 Хранятся (source='vllm', с меткой ``model``):
 * гейджи: ``num_requests_running``, ``num_requests_waiting``,
   ``kv_cache_usage`` (0..100, из ``kv_cache_usage_perc`` 0..1);
@@ -29,6 +33,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import time
 from dataclasses import dataclass
@@ -36,6 +41,7 @@ from dataclasses import dataclass
 import httpx
 
 from ..config import VllmSource
+from .maya import maya_to_metrics
 from .percentile import percentile_from_buckets
 from .prom_parser import parse_prometheus
 
@@ -174,7 +180,13 @@ class VllmCollector:
         except (httpx.HTTPError, OSError) as e:
             raise VllmError(f"GET {url} failed: {e}") from e
 
-        metrics = parse_prometheus(text)
+        if self.cfg.source_type == "maya":
+            try:
+                metrics = maya_to_metrics(text)
+            except (ValueError, json.JSONDecodeError) as e:
+                raise VllmError(f"maya /metrics: некорректный JSON: {e}") from e
+        else:
+            metrics = parse_prometheus(text)
         model = self._resolve_model(metrics)
         samples: list[Sample] = []
 
