@@ -1,4 +1,4 @@
-# Контракт API F1 (SSE + /api/model) — сверяют бек-агент и UI-агенты
+# API-контракты — сверяют бек-агент и UI-агенты
 
 ## GET /api/live (SSE)
 - `Content-Type: text/event-stream`, события: один тип, строка `data: <json>`.
@@ -73,6 +73,44 @@
 ```
 Свежие первыми (по `to`).
 
+## GET /api/health
+
+`{"ok": true, "version": str, "uptime_s": float, "db_path": str, "sources": {...}}` —
+быстрая проверка живости и версии (используется в README/DEPLOY и web `/healthz`).
+Сводный статус «Health» — отдельно, см. `GET /api/health/summary` ниже.
+
+## Прочие REST-эндпоинты
+
+- `GET /api/metrics/{metric}?from&to[&gpu][&model]` — точки графика: ≤24ч — сырые
+  `metric_samples`; ≤14д — `metric_hourly` (avg, точка в середине часа); шире —
+  `metric_daily` (fallback hourly при пустом daily). Даунсемплинг до ≤200 точек.
+  Ответ: `{"metric", "source": "raw"|"hourly"|"daily"|null, "count", "points": [[ts, value]]}`.
+- `GET /api/cost?from&to` (дефолт — сегодня с 00:00 UTC): `{"currency",
+  "total", "tokens_cost", "elec_cost", "kwh", "avg_power_w"?, "requests",
+  "prompt_tokens", "completion_tokens", "prompt_tokens_cost",
+  "completion_tokens_cost", "per_1k_out_tok"?, "per_request"?,
+  "by_day": [{"day", "total", "tokens", "electricity", "kwh", "avg_power_w"}],
+  "cumulative": [[ts, total]], "power_by_day": [{"day", "avg_power_w"}]}`.
+- `GET /api/settings/cost` → `{"current": версия|null, "history": [версии, новые первыми]}`;
+  `PUT /api/settings/cost` ← частичное `{"currency"?, "rate_per_kwh_usd"?,
+  "system_baseline_watts"?, "token_prompt_per_million_usd"?,
+  "token_completion_per_million_usd"?}` — добавляет новую версию тарифа
+  (старые не меняются; no-op версию не создаёт).
+- `GET /api/overview` — KPI шапки: `{"sources", "model",
+  "vllm": {"num_requests_running", "num_requests_waiting", "kv_cache_usage"},
+  "gpus": [...], "total_power_w"?, "total_mem_used_mib"?, "total_mem_mib"?, "ts"}`.
+- `GET /api/gpus[?live=true]` → `{"gpus": [снапшоты GPU], "live", "ts"}`;
+  `live=true` — прямой NVML-опрос, иначе последние выборки поллера.
+- `GET /api/system` — снимок системы (единый формат с `system` в SSE-пакете).
+- Логи: `GET /api/logs?from&to&level&query&source&offset&limit` →
+  `{"rows": [{"id", "ts" (мс), "level", "source", "line", "stats"}], "total",
+  "has_more", "from", "to"}` (страницы 100/250/500, ts desc);
+  `GET /api/logs/stats?from&to` → `{"by_day": [{"day", "levels", "total"}]}`
+  (дни календарные по TZ сервера); `GET /api/logs/export?...&format=txt|csv&limit`
+  — файл (≤100000 строк); `GET /api/logs/sources` — статусы log-источников;
+  `GET /api/logs/live` — SSE-хвост (`data: {"ts","source","level","line"}`,
+  при подключении — буфер последних ≤5000 строк, дедуп по id).
+
 ## Алерты (F4.1)
 - `GET /api/alerts?limit=100` → `{"active": [{"rule", "triggered_at"}], "recent": [{"id", "rule", "level", "status", "message", "triggered_at", "resolved_at"}]}` (new-сначала).
 - `POST /api/alerts/test` → тестовое Telegram-сообщение в заданный webhook (400 — не задан/не доставлено).
@@ -84,7 +122,11 @@
 ## GET /api/health/summary (F4.3)
 Сводный статус для «Health»-страницы: `service` (version/uptime/db/counts), `sources` (статусы + `last_sample_ts`), `model`, `gpus`[] (power/temp/util/mem/throttle/ecc), `system.disks`[] (mount/used_pct), `logs` (errors/critical/warnings за 24ч), `alerts_active`.
 
-## Кэша последнего снимка
+## Кэш последнего снимка
+
+Коллекторы держат в памяти последний снимок (dataclass/dict) — SSE и REST
+читают его без SQL.
+
 ## GET/PUT /api/note (вкладка «Note»)
 
 Один markdown-файл в каталоге проекта (`NOTE_PATH`, по умолчанию `note.md`
@@ -102,8 +144,6 @@
 export function mdToHtml(src: string): string;  // esc(XSS) → заголовки/списки/циты/
                                                 // fenced-code/hr/ссылки/жирный/курсив/`код`
 ```
-
-Коллекторы держат в памяти последний снимок (dataclass/dict) — читают SSE/API без SQL.
 
 ## web: общий хук SSE (пишет UI-агент GPU, используют все вкладки — НОРМАТИВНАЯ сигнатура)
 `web/src/lib/live.ts`:
