@@ -24,7 +24,7 @@ function safeHref(url: string): string | null {
   return null;
 }
 
-/** Инлайн-разметка поверх уже экранированного текста. */
+/** Инлайн-разметка поверх экранированного текста (esc — на call-sites). */
 function inline(s: string): string {
   // `код` — сначала вынести, чтобы ** /* не работали внутри
   const codes: string[] = [];
@@ -56,7 +56,7 @@ export function mdToHtml(src: string): string {
   const flushParagraph = (buf: string[]) => {
     if (buf.length)
       out.push(
-        `<p class="leading-relaxed">${inline(buf.join("<br/>"))}</p>`,
+        `<p class="leading-relaxed">${inline(buf.map(esc).join("<br/>"))}</p>`,
       );
   };
   let para: string[] = [];
@@ -91,7 +91,7 @@ export function mdToHtml(src: string): string {
         "text-base font-semibold",
         "text-sm font-semibold",
       ][h[1].length - 1];
-      out.push(`<h${h[1].length} class="mt-3 mb-1 ${cls}">${inline(h[2])}</h${h[1].length}>`);
+      out.push(`<h${h[1].length} class="mt-3 mb-1 ${cls}">${inline(esc(h[2]))}</h${h[1].length}>`);
       i += 1;
       continue;
     }
@@ -115,7 +115,7 @@ export function mdToHtml(src: string): string {
         i += 1;
       }
       out.push(
-        `<blockquote class="border-l-2 border-line pl-3 text-muted">${inline(quote.join("<br/>"))}</blockquote>`,
+        `<blockquote class="border-l-2 border-line pl-3 text-muted">${inline(quote.map(esc).join("<br/>"))}</blockquote>`,
       );
       continue;
     }
@@ -138,7 +138,7 @@ export function mdToHtml(src: string): string {
         ? "my-1 list-decimal space-y-1 pl-5"
         : "my-1 list-disc space-y-1 pl-5";
       out.push(
-        `<${ordered ? "ol" : "ul"} class="${cls}">${items.map((t) => `<li>${inline(t)}</li>`).join("")}</${ordered ? "ol" : "ul"}>`,
+        `<${ordered ? "ol" : "ul"} class="${cls}">${items.map((t) => `<li>${inline(esc(t))}</li>`).join("")}</${ordered ? "ol" : "ul"}>`,
       );
       continue;
     }

@@ -2,6 +2,13 @@ import { describe, expect, it } from "vitest";
 import { mdToHtml } from "./markdown";
 
 describe("mdToHtml", () => {
+  it("экранирует HTML в тексте (XSS-safe: dangerouslySetInnerHTML в note-tab)", () => {
+    const html = mdToHtml("превью <script>alert(1)</script> <b>x</b>");
+    expect(html).toContain("превью &lt;script&gt;alert(1)&lt;/script&gt; &lt;b&gt;x&lt;/b&gt;");
+    expect(html).not.toContain("<script");
+    expect(html).not.toContain("<b>x</b>");
+  });
+
   it("заголовки h1–h3 с классами", () => {
     expect(mdToHtml("# Титул")).toBe(
       '<h1 class="mt-3 mb-1 text-lg font-semibold">Титул</h1>',
