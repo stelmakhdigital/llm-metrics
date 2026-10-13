@@ -138,7 +138,7 @@ export function NoteTab() {
         <div className="max-w-3xl space-y-1 text-sm">
           <div dangerouslySetInnerHTML={{ __html: mdToHtml(savedText) }} />
         </div>
-      ) : (
+      ) : error != null ? null : (
         <p className="text-sm text-muted">
           Заметка пуста. Нажмите «Редактирование», запишите что-нибудь в
           markdown и сохраните.
