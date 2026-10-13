@@ -38,8 +38,12 @@ interface PeriodState {
 
 const PeriodContext = createContext<PeriodState | null>(null);
 
+// Локальная дата «сегодня» в формате YYYY-MM-DD (инпут date и setCustomRange
+// работают в локальном времени — иначе при TZ≠UTC диапазон уезжает на сутки).
 function todayStr(): string {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
 export function PeriodProvider({ children }: { children: ReactNode }) {
