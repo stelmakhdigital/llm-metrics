@@ -22,7 +22,7 @@
 | `GPU_POLL_S` | 10 | период опроса GPU (NVML), с |
 | `GPU_VISIBLE` | `all` | `all` или список индексов: `0,1` |
 | `SYS_POLL_S` | 10 | период опроса системы (CPU/RAM/диск/сеть), с |
-| **Логи vLLM** | | |
+| **Логи инференса (vLLM/maya)** | | |
 | `LOG_SOURCE_NAME` | `vllm` | имя источника |
 | `LOG_SOURCE_TYPE` | `file` | `file` или `docker` |
 | `LOG_SOURCE_PATH` | `/var/log/vllm/vllm.log` | путь в контейнере api (bind-ro хост-каталога) |

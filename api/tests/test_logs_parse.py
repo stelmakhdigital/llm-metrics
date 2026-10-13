@@ -7,7 +7,7 @@ epoch-форматы и stdout-мусор.
 from datetime import datetime, timedelta, timezone
 
 from app.logs.parse import LEVELS, normalize_level, parse_level, parse_line, parse_ts_ms
-from app.logs.patterns import parse_vllm_stat
+from app.logs.patterns import parse_stat, parse_vllm_stat  # noqa: F401 (алиас)
 
 NOW = datetime.now().astimezone()
 LOCAL_TZ = NOW.tzinfo
@@ -124,3 +124,46 @@ def test_vllm_stat_throughput():
 def test_vllm_stat_none_for_plain_lines():
     assert parse_vllm_stat("INFO: 127.0.0.1 - GET /metrics 200") is None
     assert parse_vllm_stat("") is None
+
+
+# ------------------------------------------------------------- stat-паттерны maya
+
+MAYA_STAT_LINE = (
+    "glm stat: decode 22.54 ms/tok (44.36 tok/s) | vram hit 99.77% "
+    "| ram fetches 0.00/tok | prompt 0.1 ms/tok | vram 12218/12513 ram 5/308"
+)
+
+
+def test_maya_stat_line():
+    stats = parse_stat(MAYA_STAT_LINE)
+    # tok/s → скорость генерации; vram X/Y → занятость экспертного кэша (аналог KV)
+    assert stats["avg_generation_throughput"] == 44.36
+    assert stats["kv_cache_pct"] == 97.64
+    # «vram hit 99.77%» — НЕ занятость (это hit-рейт), в kv не попадает
+    assert "prefix_cache_hit_rate_pct" not in stats
+    assert "running" not in stats and "waiting" not in stats
+
+
+def test_maya_done_line():
+    line = (
+        "[maya] done: 1349 tokens in 35 s (49.4 tok/s) (stop, cancel=False), "
+        "expert cache 99.9% hit"
+    )
+    stats = parse_stat(line)
+    assert stats["avg_generation_throughput"] == 49.4
+    # «expert cache N% hit» — не prefix-кэш, не маппим
+    assert "prefix_cache_hit_rate_pct" not in stats
+    assert "kv_cache_pct" not in stats
+
+
+def test_maya_phase_line():
+    line = "[maya] thinking: 1177 of max 16384 tokens, 48.6 tok/s, 32 s"
+    stats = parse_stat(line)
+    assert stats == {"avg_generation_throughput": 48.6}
+
+
+def test_maya_stat_vram_zero_total():
+    # деление на ноль не роняет парсер
+    stats = parse_stat("glm stat: decode 1.0 ms/tok (1.0 tok/s) | vram 0/0 ram 0/0")
+    assert stats["avg_generation_throughput"] == 1.0
+    assert "kv_cache_pct" not in stats

@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from ..logs.parse import LEVELS, LEVEL_ALIASES, normalize_level
-from ..logs.patterns import parse_vllm_stat
+from ..logs.patterns import parse_stat
 from ..storage.db import rows_to_dicts
 
 router = APIRouter(prefix="/api")
@@ -122,7 +122,7 @@ async def logs_page(
             "level": r["level"],
             "source": r["source"],
             "line": r["line"],
-            "stats": parse_vllm_stat(r["line"]),
+            "stats": parse_stat(r["line"]),
         }
         for r in rows
     ]
