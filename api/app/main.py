@@ -29,6 +29,7 @@ from .api.alerts_routes import router as alerts_router
 from .api.cost import router as cost_router
 from .api.live_routes import router as live_router
 from .api.model_routes import router as model_router
+from .api.note_routes import router as note_router
 from .api.routes import router
 from .api.logs_routes import router as logs_router
 from .api.settings import router as settings_router
@@ -64,6 +65,7 @@ def create_app(
     app.include_router(alerts_router)
     app.include_router(system_router)
     app.include_router(model_router)
+    app.include_router(note_router)
     app.include_router(live_router)
 
     @asynccontextmanager

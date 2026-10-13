@@ -8,6 +8,7 @@ import {
   Server,
   DollarSign,
   ScrollText,
+  NotebookPen,
   Settings,
   Bell,
   HeartPulse,
@@ -23,6 +24,7 @@ const NAV: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/system", label: "Система", icon: Server },
   { href: "/cost", label: "Цена", icon: DollarSign },
   { href: "/logs", label: "Логи", icon: ScrollText },
+  { href: "/note", label: "Note", icon: NotebookPen },
   { href: "/alerts", label: "Алерты", icon: Bell },
   { href: "/health", label: "Health", icon: HeartPulse },
 ];

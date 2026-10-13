@@ -101,11 +101,18 @@ class Sources(BaseModel):
     logs: LogSources = LogSources()
 
 
+class NoteConfig(BaseModel):
+    # Путь файла заметки (вкладка «Note»); None → note.md рядом с БД
+    # (в docker: /data/note.md — bind ./data, т.е. файл в каталоге проекта)
+    note_path: str | None = None
+
+
 class AppConfig(BaseModel):
     sources: Sources = Sources()
     storage: Storage = Storage()
     cost: Cost = Cost()
     alerts: Alerts = Alerts()
+    note: NoteConfig = NoteConfig()
     # dev-режим: не запускать pollers (используется в тестах)
     start_pollers: bool = True
 
@@ -259,4 +266,5 @@ def load_config() -> AppConfig:
             telegram_webhook=_env_telegram_webhook(),
             check_interval_s=_env_int("ALERTS_INTERVAL_S", 30),
         ),
+        note=NoteConfig(note_path=_env("NOTE_PATH") or None),
     )

@@ -85,6 +85,24 @@
 Сводный статус для «Health»-страницы: `service` (version/uptime/db/counts), `sources` (статусы + `last_sample_ts`), `model`, `gpus`[] (power/temp/util/mem/throttle/ecc), `system.disks`[] (mount/used_pct), `logs` (errors/critical/warnings за 24ч), `alerts_active`.
 
 ## Кэша последнего снимка
+## GET/PUT /api/note (вкладка «Note»)
+
+Один markdown-файл в каталоге проекта (`NOTE_PATH`, по умолчанию `note.md`
+рядом с БД — в docker bind `./data` → `/data/note.md`). Перезаписывается
+целиком; внешние правки видны через GET.
+
+- `GET /api/note` → `{"content": str, "exists": bool, "mtime": epoch_c|null,
+  "path": str}`;
+- `PUT /api/note` ← `{"content": str (≤ 2 000 000 символов)}` →
+  `{"saved": true, "mtime": epoch_c, "path": str}`; ошибка записи → 500.
+
+## web: рендер markdown для превью заметки (без зависимостей)
+`web/src/lib/markdown.ts`:
+```ts
+export function mdToHtml(src: string): string;  // esc(XSS) → заголовки/списки/циты/
+                                                // fenced-code/hr/ссылки/жирный/курсив/`код`
+```
+
 Коллекторы держат в памяти последний снимок (dataclass/dict) — читают SSE/API без SQL.
 
 ## web: общий хук SSE (пишет UI-агент GPU, используют все вкладки — НОРМАТИВНАЯ сигнатура)

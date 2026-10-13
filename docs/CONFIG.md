@@ -40,6 +40,8 @@
 | `BASELINE_WATTS` | 200 | базовая мощность хоста (CPU/SSD/сеть), Вт — считается в стоимость |
 | `PROMPT_PRICE_PER_M` | 0.5 | цена prompt-токенов, $/1M |
 | `COMPLETION_PRICE_PER_M` | 1.5 | цена completion-токенов, $/1M |
+| **Заметка** | | |
+| `NOTE_PATH` | `note.md` рядом с БД (`/data/note.md` в docker → `./data/note.md` на хосте) | markdown-файл вкладки «Note», перезаписывается целиком |
 | **Алерты** | | |
 | `ALERTS_ENABLED` | `true` | вкл/выкл движок алертов |
 | `ALERTS_INTERVAL_S` | 30 | период проверки правил, с |

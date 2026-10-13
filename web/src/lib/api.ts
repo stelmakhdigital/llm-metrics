@@ -512,3 +512,19 @@ export interface OverviewSnapshot {
 }
 
 export const OVERVIEW_URL = "/api/overview";
+
+// ---- Note (файл заметки, markdown; файл в каталоге проекта) ----
+export interface NoteData {
+  content: string;
+  exists: boolean;
+  mtime: number | null; // epoch-сек
+  path: string;
+}
+
+export interface NoteSaved {
+  saved: boolean;
+  mtime: number;
+  path: string;
+}
+
+export const NOTE_URL = "/api/note";
