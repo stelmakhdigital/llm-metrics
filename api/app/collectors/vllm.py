@@ -292,11 +292,19 @@ class VllmCollector:
             for name in candidates:
                 b = metrics.get(name + "_bucket")
                 if b is not None and b.series:
-                    # несколько engine — сумма counts по одинаковому le
-                    # (как в _series_sum и для TOKEN_BUCKET_METRICS ниже):
-                    # иначе interleaved buckets разных engine не монотонны
-                    # и квантиль по ним неверен
-                    by_le: dict[float, float] = {}
+                    # Несколько engine: сумма counts корректна только при
+                    # одинаковом наборе границ le. Разные bucket-config'ы
+                    # (разный набор le) при суммировании дают немонотонный
+                    # кумулятивный ряд → квантиль неверен. Поэтому series
+                    # группируем по «прочим» меткам (engine/…) и по набору
+                    # границ; при расхождении наборов оставляем доминирующий
+                    # (максимальный итоговый count), чужие отбрасываем.
+                    # Мерж по объединению границ отвергнут: у части engine
+                    # counts на чужих le нет, достраивать их пришлось бы
+                    # нулями/оценкой (пропуски ≠ 0, инвариант №1), а
+                    # интерполяция по buckets (инвариант №4) корректна
+                    # только на консистентном кумулятивном ряду.
+                    engines: dict[tuple, dict[float, float]] = {}
                     for s in b.series:
                         le = s.labels.get("le")
                         if le is None or s.value is None:
@@ -305,8 +313,26 @@ class VllmCollector:
                             le_f = float("inf") if le == "+Inf" else float(le)
                         except ValueError:
                             continue
+                        key = tuple(sorted(
+                            (k, v) for k, v in s.labels.items() if k != "le"
+                        ))
+                        by_le = engines.setdefault(key, {})
                         by_le[le_f] = by_le.get(le_f, 0.0) + s.value
-                    buckets = sorted(by_le.items()) if by_le else None
+                    if engines:
+                        # engine'ы с одинаковым набором границ суммируем
+                        grids: dict[tuple, dict[float, float]] = {}
+                        for by_le in engines.values():
+                            key = tuple(sorted(by_le))
+                            g = grids.setdefault(key, {})
+                            for le_f, val in by_le.items():
+                                g[le_f] = g.get(le_f, 0.0) + val
+                        # доминирующий набор границ: итоговый count —
+                        # значение последнего (максимального) bucket'а
+                        chosen = max(
+                            grids.values(),
+                            key=lambda g: g[max(g)],
+                        )
+                        buckets = sorted(chosen.items())
                     if buckets:
                         break
             if not buckets:
