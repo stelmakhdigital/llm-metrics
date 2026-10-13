@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { Activity, Bell, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Select } from "@/components/ui/select";
@@ -24,6 +25,7 @@ const SOURCE_BADGES: { key: "vllm" | "gpu" | "system"; label: string }[] = [
  * переключатель периодов + живой индикатор «● каждые 2 c  ЧЧ:ММ:СС».
  */
 export function Header() {
+  const pathname = usePathname();
   const { packet, connected, lastUpdate } = useLive();
   useNow(1000); // тик раз в секунду для часов
   const { model, setModel, models } = useModel();
@@ -118,11 +120,14 @@ export function Header() {
         </div>
       </div>
 
-      {/* Строка 2 (на <md — отдельная, на md+ инлайн): периоды + часы */}
+      {/* Строка 2 (на <md — отдельная, на md+ инлайн): периоды + часы.
+          На «Сводке» переключателя периодов нет — сводка не фильтруется по периоду. */}
       <div className="-my-0.5 flex items-center gap-3 overflow-x-auto py-2 md:py-0">
-        <div className="shrink-0">
-          <PeriodSwitcher />
-        </div>
+        {pathname !== "/overview" && (
+          <div className="shrink-0">
+            <PeriodSwitcher />
+          </div>
+        )}
         <span className="hidden shrink-0 items-center gap-1.5 text-xs text-muted md:flex">
           <span
             aria-hidden
