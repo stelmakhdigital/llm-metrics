@@ -284,15 +284,15 @@ export function MetricChart({
       {state.error && <ErrorBanner message={state.error} />}
       {state.loading && !state.error ? (
         <SkeletonChart height={height - 48} />
-      ) : !hasData ? (
-        <NoData />
-      ) : (
+      ) : hasData ? (
         marksList.length > 0 ? (
           <MarkedUPlot series={state.series} height={height} marks={marksList} />
         ) : (
           <UPlotChart series={state.series} height={height} />
         )
-      )}
+      ) : !state.error ? (
+        <NoData />
+      ) : null}
     </ChartCard>
   );
 }
