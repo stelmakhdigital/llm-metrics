@@ -204,3 +204,23 @@ async def test_hourly_per_model(agg, db):
         "SELECT count(*) c FROM metric_hourly WHERE metric='cpu_usage' AND model IS NULL"
     ))[0]["c"]
     assert cpu == 1
+
+
+async def test_daily_weighted_by_count(agg, db):
+    """Суточные avg/p95 — взвешенные по count часы (час с бóльшим числом
+    выборок даёт больший вклад; напр., час с пропуском не равноправен)."""
+    # час 0: 1 выборка value 10 (count=1); часы 1..5: по 20 выборок value 1000
+    rows = [("m", DAY + 1800, 10.0, "vllm", None, "x")]
+    for h in range(1, 6):
+        rows += [("m", DAY + h * 3600 + 1800, 1000.0, "vllm", None, "x")
+                 for _ in range(20)]
+    await seed_samples_aio(db, rows)
+    await agg._aggregate_hourly(NOW)
+    await agg._aggregate_daily(NOW)
+    d = dict((await db.execute_fetchall("SELECT * FROM metric_daily WHERE metric='m'"))[0])
+    # не среднее по часам (1009.9…/6), а взвешенное: (10 + 100*1000)/101
+    assert d["avg"] == pytest.approx(100_010 / 101)
+    assert d["count"] == 101
+    assert d["sum"] == pytest.approx(100_010.0)
+    # p95: взвешенное среднее часовых p95 (по count)
+    assert d["p95"] == pytest.approx(100_010 / 101)
