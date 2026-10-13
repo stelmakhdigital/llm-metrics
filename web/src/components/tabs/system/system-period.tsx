@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePeriod } from "@/lib/periods";
 import { useRefresh } from "@/lib/refresh";
 import { useLive } from "@/lib/live";
@@ -151,10 +151,12 @@ export function SystemPeriod() {
   const rangeOk = from != null && to != null && to > from;
   const sysOffline = packet != null && packet.sources?.system === "offline";
 
-  // /api/system (разово): число ядер + список mount-ов для disk_used_pct
+  // /api/system (разово): число ядер + список mount-ов для disk_used_pct.
+  // mounts — useMemo: иначе новый массив на каждом рендере → PeriodDisks
+  // перезапускает эффект бесконечно (цикл запросов /api/metrics/disk_used_pct).
   const { data: snap } = usePoll<SystemSnapshot>("/api/system", 0);
   const coreCount = snap?.cpu.per_core.length ?? 0;
-  const mounts = snap?.disks.map((d) => d.mount) ?? [];
+  const mounts = useMemo(() => snap?.disks.map((d) => d.mount) ?? [], [snap]);
 
   const [cpuMode, setCpuMode] = useState<"total" | "cores">("total");
   const cpuSpecs = cpuMode === "cores" && coreCount > 0 ? coreSpecs(coreCount) : CPU_TOTAL;
