@@ -52,21 +52,31 @@ function NavItem({ href, label, icon: Icon }: (typeof NAV)[number]) {
   );
 }
 
-/** Мобильный пункт нижней панели: touch-target ≥ 40px (M5); min-w-0 —
- * чтобы 10 пунктов сжимались на экранах <400px вместо переполнения. */
-function NavItemMobile({ href, label, icon: Icon }: (typeof NAV)[number]) {
+/** Мобильный пункт нижней панели: touch-target ≥ 40px (M5). В компактном
+ * режиме (>8 пунктов) — иконка без подписи: 10 × 40px держат target ≥ 40px
+ * по обеим осям без truncate-деградации; панель прокручивается по X
+ * (градиентная маска справа — аффордансность прокрутки). */
+function NavItemMobile({
+  href,
+  label,
+  icon: Icon,
+  compact = false,
+}: (typeof NAV)[number] & { compact?: boolean }) {
   const active = usePathname() === href;
   return (
     <Link
       href={href}
       aria-label={label}
+      title={label}
       className={cn(
-        "flex min-h-12 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 px-0.5 py-1",
+        compact
+          ? "flex min-w-10 min-h-12 shrink-0 items-center justify-center"
+          : "flex min-h-12 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 px-0.5 py-1",
         active ? "text-accent" : "text-muted",
       )}
     >
       <Icon className="size-5 shrink-0" />
-      <span className="max-w-full truncate text-[10px] leading-none">{label}</span>
+      {!compact && <span className="max-w-full truncate text-[10px] leading-none">{label}</span>}
     </Link>
   );
 }
@@ -95,11 +105,18 @@ export function Sidebar() {
         </div>
       </aside>
 
-      {/* Mobile (<md): нижняя панель навигации */}
-      <nav className="fixed inset-x-0 bottom-0 z-30 flex items-stretch border-t border-line bg-panel pb-[env(safe-area-inset-bottom)] md:hidden">
+      {/* Mobile (<md): нижняя панель навигации; >8 пунктов — компактные
+          иконки без подписей + горизонтальная прокрутка с аффордансностью */}
+      <nav className="fixed inset-x-0 bottom-0 z-30 flex items-stretch overflow-x-auto border-t border-line bg-panel pb-[env(safe-area-inset-bottom)] md:hidden">
         {ALL_NAV.map((item) => (
-          <NavItemMobile key={item.href} {...item} />
+          <NavItemMobile key={item.href} compact={ALL_NAV.length > 8} {...item} />
         ))}
+        {ALL_NAV.length > 8 && (
+          <span
+            aria-hidden
+            className="pointer-events-none absolute right-0 top-0 h-full w-6 bg-gradient-to-l from-panel to-transparent"
+          />
+        )}
       </nav>
     </>
   );
