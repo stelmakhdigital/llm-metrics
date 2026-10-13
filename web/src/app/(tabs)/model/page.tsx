@@ -12,7 +12,7 @@ export default function ModelPage() {
   const { period } = usePeriod();
   return (
     <div>
-      <h1 className="mb-4 text-lg font-semibold">Модель (vLLM)</h1>
+      <h1 className="mb-4 text-lg font-semibold">Модель (LLM)</h1>
       {period === "live" ? <ModelLive /> : <ModelPeriod />}
     </div>
   );

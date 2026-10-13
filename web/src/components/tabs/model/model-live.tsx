@@ -27,7 +27,7 @@ export function ModelLive() {
         <InfoBanner message="Соединение с сервером метрик не установлено — ждём SSE…" />
       )}
       {vllmOffline && (
-        <InfoBanner message="Источник vLLM оффлайн — KPI модели недоступны." />
+        <InfoBanner message="Источник LLM оффлайн — KPI модели недоступны." />
       )}
 
       {packet == null ? (

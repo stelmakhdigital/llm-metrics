@@ -22,7 +22,7 @@ import { LevelChip, LOG_LEVELS, LEVEL_CHIP_STYLES } from "./level";
 const LINE_TRUNCATE = 180;
 const PAGE_SIZES = [100, 250, 500] as const;
 
-/** Компактная боковая колонка stat-строк vLLM (running/waiting/KV%/throughput). */
+/** Компактная боковая колонка stat-строк инференса (running/waiting/KV%/throughput). */
 function statsText(s: VllmLogStats | null): string {
   if (s == null) return "";
   const parts: string[] = [];
@@ -269,7 +269,7 @@ export function LogsHistory({ from, to }: { from: number; to: number }) {
                 <th className="px-2 py-2 font-medium">Уровень</th>
                 <th className="px-2 py-2 font-medium">Источник</th>
                 <th className="px-2 py-2 font-medium">Текст</th>
-                <th className="px-2 py-2 font-medium">Stat vLLM</th>
+                <th className="px-2 py-2 font-medium">Stat LLM</th>
                 <th className="px-3 py-2 font-medium" />
               </tr>
             </thead>

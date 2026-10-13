@@ -13,14 +13,14 @@ import { bustCache } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const SOURCE_BADGES: { key: "vllm" | "gpu" | "system"; label: string }[] = [
-  { key: "vllm", label: "vLLM" },
+  { key: "vllm", label: "LLM" },
   { key: "gpu", label: "GPU" },
   { key: "system", label: "SYS" },
 ];
 
 /**
  * Шапка: логотип + селектор модели (F4.4) + сводный статус |
- * бейджи статусов источников (vLLM/GPU/SYS) + колокольчик алертов (F4.1) +
+ * бейджи статусов источников (LLM/GPU/SYS) + колокольчик алертов (F4.1) +
  * переключатель периодов + живой индикатор «● каждые 2 c  ЧЧ:ММ:СС».
  */
 export function Header() {

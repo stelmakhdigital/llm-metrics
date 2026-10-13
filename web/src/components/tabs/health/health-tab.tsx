@@ -95,7 +95,7 @@ export function HealthTab() {
 
         {/* Модель */}
         <section className="rounded-xl border border-line bg-panel p-4">
-          <h2 className="mb-2 text-sm font-medium">Модель vLLM</h2>
+          <h2 className="mb-2 text-sm font-medium">Модель</h2>
           {data.model ? (
             <div className="text-sm">{data.model}</div>
           ) : (
@@ -227,7 +227,7 @@ export function HealthTab() {
       </div>
 
       {data.model == null && (
-        <InfoBanner message="Модель vLLM недоступна — источник vllm оффлайн или ещё не собрал данные." />
+        <InfoBanner message="Модель недоступна — источник LLM оффлайн или ещё не собрал данные." />
       )}
     </div>
   );

@@ -198,7 +198,7 @@ export function MetricChart({
   /** Пояснение к графику — иконка «?» у заголовка */
   tip?: string;
   height?: number;
-  /** F4.4: фильтр по модели (только вкладки vLLM) */
+  /** F4.4: фильтр по модели (только вкладки LLM-метрик) */
   model?: string | null;
 }) {
   const [state, setState] = useState<State>({

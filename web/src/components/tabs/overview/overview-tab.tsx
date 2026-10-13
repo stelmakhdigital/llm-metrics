@@ -40,7 +40,7 @@ import { cn } from "@/lib/utils";
 const DAY_S = 86_400;
 /** Точка статуса стека (перечень фиксирован — основные источники). */
 const SOURCE_CHIPS: { key: string; label: string }[] = [
-  { key: "vllm", label: "vLLM" },
+  { key: "vllm", label: "LLM" },
   { key: "gpu", label: "GPU" },
   { key: "system", label: "SYS" },
 ];

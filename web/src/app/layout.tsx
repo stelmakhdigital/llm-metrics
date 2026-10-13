@@ -7,7 +7,7 @@ import { RefreshProvider } from "@/lib/refresh";
 export const metadata: Metadata = {
   title: "llm-metrics",
   description:
-    "Веб-мониторинг vLLM-сервера: модель, GPU, система, стоимость, логи",
+    "Веб-мониторинг LLM-сервера: модель, GPU, система, стоимость, логи",
 };
 
 export default function RootLayout({

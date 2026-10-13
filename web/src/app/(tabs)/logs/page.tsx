@@ -50,7 +50,7 @@ function ModeToggle({ mode, onChange }: { mode: LogsMode; onChange: (m: LogsMode
  * Вкладка «Логи» (ТЗ §5.6): мини-график «логи по уровням» за 7 дней
  * (клик по дню → фильтр), навигация по дням «< 10.07 2026 >», таблица с
  * фильтрами/страницами 100/250/500, Live-хвост (SSE), экспорт txt/csv,
- * автопарсинг stat-строк vLLM. Ретенция — 14 дней (api, logs.retention_days).
+ * автопарсинг stat-строк инференса (vLLM/maya). Ретенция — 14 дней (api, logs.retention_days).
  */
 export default function LogsPage() {
   const [mode, setMode] = useState<LogsMode>("history");

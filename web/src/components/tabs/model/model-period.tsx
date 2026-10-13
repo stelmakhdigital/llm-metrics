@@ -112,7 +112,7 @@ export function ModelPeriod() {
             <KpiGrid cards={periodKpiCards(kpi, spanSec)} />
           ) : !error ? (
             vllmStatus && vllmStatus !== "online" ? (
-              <InfoBanner message="Нет данных: источник vLLM оффлайн — метрики модели не собираются." />
+              <InfoBanner message="Нет данных: источник LLM оффлайн — метрики модели не собираются." />
             ) : (
               <NoData />
             )
@@ -140,7 +140,7 @@ export function ModelPeriod() {
               to={to as number}
               marks={marks}
               model={model}
-              tip="Время от поступления запроса до первого токена ответа (p50/p95). Квантили из кумулятивного histogram'а vLLM: отражают статистику с момента запуска/рестарта vLLM, не только выбранный период."
+              tip="Время от поступления запроса до первого токена ответа (p50/p95). Квантили из кумулятивного histogram'а инференса: отражают статистику с момента запуска/рестарта инференса, не только выбранный период."
             />
             <MetricChart
               title="ITL / TPOT, с"
@@ -149,7 +149,7 @@ export function ModelPeriod() {
               to={to as number}
               marks={marks}
               model={model}
-              tip="ITL — пауза между последовательными токенами, TPOT — среднее время на один сгенерированный токен (p50/p95). Квантили из кумулятивного histogram'а vLLM (с момента запуска/рестарта)."
+              tip="ITL — пауза между последовательными токенами, TPOT — среднее время на один сгенерированный токен (p50/p95). Квантили из кумулятивного histogram'а инференса (с момента запуска/рестарта)."
             />
             <MetricChart
               title="E2E latency p95, с"
@@ -158,7 +158,7 @@ export function ModelPeriod() {
               to={to as number}
               marks={marks}
               model={model}
-              tip="Полное время запроса: от поступления до последнего токена, p95. Квантиль из кумулятивного histogram'а vLLM; растёт с длиной генерации."
+              tip="Полное время запроса: от поступления до последнего токена, p95. Квантиль из кумулятивного histogram'а инференса; растёт с длиной генерации."
             />
             <MetricChart
               title="Prompt throughput, токены/с"
@@ -167,7 +167,7 @@ export function ModelPeriod() {
               to={to as number}
               marks={marks}
               model={model}
-              tip="Скорость обработки входных токенов. Включает токены из prefix-кэша — поэтому может быть много выше, чем «Avg prompt throughput» в логах vLLM."
+              tip="Скорость обработки входных токенов. Включает токены из prefix-кэша — поэтому может быть много выше, чем «Avg prompt throughput» в логах инференса."
             />
             <MetricChart
               title="Generation throughput, токены/с"
@@ -185,7 +185,7 @@ export function ModelPeriod() {
               to={to as number}
               marks={marks}
               model={model}
-              tip="Занятость KV-кэша vLLM, % (мемори под ключи/значения attention). Высокая близкая к 100% — новые запросы могут не помещаться и вытеснять старые (премпты)."
+              tip="Занятость KV-кэша инференса, % (мемори под ключи/значения attention; для maya — занятость экспертного кэша). Высокая близкая к 100% — новые запросы могут не помещаться и вытеснять старые (премпты)."
             />
             <MetricChart
               title="Запросы: running / waiting"
