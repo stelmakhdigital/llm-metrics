@@ -39,9 +39,12 @@
 ## GET /api/model?from&to[&model]
 `from/to` — epoch-сек. `model` (F4.4) — фильтр по модели. ≤24ч — сырые данные;
 >24ч — rates/квантили из `metric_hourly` (с 0004 агрегаты несут model).
-Счётчики (finish reasons, distributions, prefix, preemptions) и «последние
-значения» (running/waiting/kv) — только сырые: при filtere и периоде за
-границей raw-ретенции (168ч) могут быть null. Ответ:
+«Последние значения» (running/waiting/kv) — только сырые: при фильтре и
+периоде за границей raw-ретенции (168ч) — null. Счётчики (finish reasons,
+distributions, prefix, preemptions): ≤24ч — дельты сырых счётчиков; >24ч —
+агрегат `model_tokens` (дельты по часам; без фильтра — сумма по всем моделям),
+а нет агрегата и период ≤ raw-ретенции — дельты сырых счётчиков, глубже — null.
+Ответ:
 ```json
 {
   "models": [{"name": "qwen3.8-27b-dflash2", "from": 1756200000, "to": 1756210000}],
@@ -60,14 +63,16 @@
   }
 }
 ```
-- `models` — сегментация по метке `model` в metric_samples (для графика — вертикальные линии).
-- Счётчики за период — дифф (первые/последние значения), finish reasons — по `request_success_total_{reason}`.
+- `models` — сегментация по метке `model` (агрегат `model_tokens`, fallback — metric_samples; для графика — вертикальные линии).
+- Счётчики за период — дифф (первые/последние значения; >24ч — агрегат
+  `model_tokens`), finish reasons — по `request_success_total_{reason}`.
 - Квантили: p50/p95 — по точкам сырых квантилей за период (точки уже посчитаны при скрейпе интерполяцией по buckets); e2e — p95 из тех же точек. Период >24ч — из hourly (p95-колонка).
 - Графики вкладки «Модель» идут через существующий `/api/metrics/{metric}` (метрики: num_requests_running, num_requests_waiting, prompt_tokens_rate, generation_tokens_rate, ttft_p50, ttft_p95, itl_p50, itl_p95, tpot_p50, tpot_p95, e2e_latency_p95, kv_cache_usage, prefix_hit_rate, preemptions_rate).
 - Для distributions: коллектор vLLM дополнительно хранит кумулятивные счётчики `request_prompt_tokens_bucket_{le}` / `request_generation_tokens_bucket_{le}` (le — из лейблов, без `+Inf`).
 
 ## GET /api/model/models (F4.4)
-Исторический список моделей (метка `model` в metric_samples, source=vllm):
+Исторический список моделей (агрегат `model_tokens`; пока его нет — метка
+`model` в metric_samples, source=vllm):
 ```json
 {"models": [{"name": "qwen3.8-27b-dflash2", "from": 1756200000, "to": 1756210000, "count": 1234}]}
 ```
@@ -82,8 +87,9 @@
 ## Прочие REST-эндпоинты
 
 - `GET /api/metrics/{metric}?from&to[&gpu][&model]` — точки графика: ≤24ч — сырые
-  `metric_samples`; ≤14д — `metric_hourly` (avg, точка в середине часа); шире —
-  `metric_daily` (fallback hourly при пустом daily). Даунсемплинг до ≤200 точек.
+  `metric_samples` (пустые — fallback на hourly); ≤14д — `metric_hourly` (avg,
+  точка в середине часа); шире — `metric_daily` (fallback hourly при пустом
+  daily). Даунсемплинг до ≤200 точек.
   Ответ: `{"metric", "source": "raw"|"hourly"|"daily"|null, "count", "points": [[ts, value]]}`.
 - `GET /api/cost?from&to` (дефолт — сегодня с 00:00 UTC): `{"currency",
   "total", "tokens_cost", "elec_cost", "kwh", "avg_power_w"?, "requests",
@@ -105,8 +111,8 @@
 - Логи: `GET /api/logs?from&to&level&query&source&offset&limit` →
   `{"rows": [{"id", "ts" (мс), "level", "source", "line", "stats"}], "total",
   "has_more", "from", "to"}` (страницы 100/250/500, ts desc);
-  `GET /api/logs/stats?from&to` → `{"by_day": [{"day", "levels", "total"}]}`
-  (дни календарные по TZ сервера); `GET /api/logs/export?...&format=txt|csv&limit`
+  `GET /api/logs/stats?from&to` → `{"from", "to", "by_day": [{"day", "levels", "total"}]}`
+  (дни календарные по TZ сервера, окно ≤400 дней); `GET /api/logs/export?...&format=txt|csv&limit`
   — файл (≤100000 строк); `GET /api/logs/sources` — статусы log-источников;
   `GET /api/logs/live` — SSE-хвост (`data: {"ts","source","level","line"}`,
   при подключении — буфер последних ≤5000 строк, дедуп по id).
@@ -114,9 +120,9 @@
 ## Алерты (F4.1)
 - `GET /api/alerts?limit=100` → `{"active": [{"rule", "triggered_at"}], "recent": [{"id", "rule", "level", "status", "message", "triggered_at", "resolved_at"}]}` (new-сначала).
 - `POST /api/alerts/test` → тестовое Telegram-сообщение в заданный webhook (400 — не задан/не доставлено).
-- `GET /api/settings/alerts` → `{"enabled": bool, "telegram_webhook": str, "webhook_configured": bool, "rules": [rule]}`.
+- `GET /api/settings/alerts` → `{"enabled": bool, "telegram_webhook": str, "webhook_configured": bool, "web_base_url": str, "rules": [rule]}`.
 - `PUT /api/settings/alerts` → частичное: `{"enabled"?, "telegram_webhook"?, "rules"? (целиком), "reset_rules"? (правила по умолчанию)}`.
-- Rule: `{"id", "title", "level": "warning|critical", "metric"?, "op": ">|<"?, "value"?, "source": "vllm|gpu|system"?, "for_s", "cooldown_s", "enabled"}`.
+- Rule: `{"id", "title", "level": "warning|critical", "metric"?, "op": ">|<"?, "value"?, "source": "vllm|gpu|system"?, "for_s", "cooldown_s", "enabled", "webhook"? (per-rule Telegram-webhook, None — глобальный)}`.
 - Смысл: нарушение `metric op value` в последних `for_s` с и в последних 120 с (свежие данные); `source` — источник оффлайн ≥ `for_s`. После recovery — пауза `cooldown_s`. Журнал — таблица `alerts` (активные восстанавливаются после рестарта).
 
 ## GET /api/health/summary (F4.3)
@@ -155,7 +161,8 @@ export type GpuSnapshot = { id: number; name: string; power_w: number | null; po
 export type LivePacket = { ts: number; sources: Record<string, "ok" | "offline">;
   model: string | null; kpi: Record<string, number | null> | null;
   gpu_total: { power_w: number; mem_used_mib: number; mem_total_mib: number } | null;
-  gpus: GpuSnapshot[] | null; system: SystemSnapshot | null };
+  gpus: GpuSnapshot[] | null; system: SystemSnapshot | null;
+  alerts_active: number };
 export function useLive(): {
   packet: LivePacket | null;        // последний пакет
   connected: boolean;                // SSE жив

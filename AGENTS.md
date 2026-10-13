@@ -13,13 +13,15 @@ API/конфиг — `docs/`.
 ## Структура
 
 ```
-api/          # FastAPI: collectors/(vllm|gpu|system), storage, aggregator,
-              # cost/, logs/, alerts/, query.py, model_api.py, api/ (роутеры)
-  migrations/ # alembic
-web/          # Next.js App Router; app/(tabs)/model|gpu|system|cost|logs|...
-              # общие: components/tabs/common.tsx (ChartCard/KpiCard),
-              # components/charts/UPlotChart.tsx, lib/ (periods, model-context)
-docs/         # DEPLOY (запуск), CONFIG (.env + скрипты vLLM), api-contracts
+api/          # FastAPI (api/app/): api/ (роутеры), collectors/(vllm|gpu|system|
+              # maya), storage, aggregator, cost/, logs/, alerts/, query.py,
+              # model_api.py, model_counters.py
+  migrations/ # alembic; tests/, mock/ — рядом
+web/          # Next.js App Router; src/app/(tabs)/overview|model|gpu|system|
+              # cost|logs|alerts|note|health|settings; общие: src/components/
+              # tabs/common.tsx (ChartCard/KpiCard), src/components/charts/
+              # UPlotChart.tsx, src/lib/ (api, periods, live, model-context)
+docs/         # DEPLOY (запуск), CONFIG (.env + скрипты vLLM/maya), api-contracts
 ```
 
 ## Инварианты (не нарушать)

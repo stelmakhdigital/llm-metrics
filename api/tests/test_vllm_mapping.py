@@ -244,3 +244,33 @@ def test_histogram_percentiles_multi_engine():
     assert m["ttft_p95"].value == pytest.approx(0.5 + 0.5 * (0.95 * 253 - 100) / 150)
     # p50: доля 126.5 → 0.5 + 0.5*(126.5-100)/150 = 0.58833
     assert m["ttft_p50"].value == pytest.approx(0.5 + 0.5 * (126.5 - 100) / 150)
+
+
+def test_histogram_percentiles_foreign_boundaries_dropped():
+    """Немонотонный кейс: у engine разные наборы границ le (разный
+    bucket-config). Сумма counts по объединению le даёт немонотонный
+    кумулятивный ряд (0.5: 9 → 1.0: 6) → неверный квантиль. Engine'ы
+    с чужими границами отбрасываются: остаётся доминирующий набор
+    (максимальный итоговый count), интерполяция по buckets корректна."""
+    import asyncio
+
+    # engine 0: (0.5,5) (10,900) (+Inf,905) — итоговый count 905
+    # engine 1: (0.5,4) (1.0,6) (+Inf,7) — чужой набор границ
+    text = (
+        'vllm:num_requests_running{model_name="m"} 1.0\n'
+        'vllm:time_to_first_token_seconds_bucket{engine="0",le="0.5",model_name="m"} 5.0\n'
+        'vllm:time_to_first_token_seconds_bucket{engine="0",le="10",model_name="m"} 900.0\n'
+        'vllm:time_to_first_token_seconds_bucket{engine="0",le="+Inf",model_name="m"} 905.0\n'
+        'vllm:time_to_first_token_seconds_bucket{engine="1",le="0.5",model_name="m"} 4.0\n'
+        'vllm:time_to_first_token_seconds_bucket{engine="1",le="1.0",model_name="m"} 6.0\n'
+        'vllm:time_to_first_token_seconds_bucket{engine="1",le="+Inf",model_name="m"} 7.0\n'
+    )
+    col = VllmCollector(VllmSource())
+    samples = asyncio.run(col.poll(FakeClient(text), now=1_700_000_000))
+    m = by_metric(samples)
+    # p95 по доминирующему engine 0: доля 0.95*905 = 859.75 → bucket (0.5, 10):
+    # 0.5 + 9.5*(859.75-5)/(900-5) ≈ 9.5728
+    # (сумма по union была бы немонотонной: 0.5:9 → 1.0:6 → 10:900)
+    assert m["ttft_p95"].value == pytest.approx(0.5 + 9.5 * (0.95 * 905 - 5) / 895)
+    # p50: доля 452.5 → 0.5 + 9.5*(452.5-5)/(900-5) = 5.25
+    assert m["ttft_p50"].value == pytest.approx(0.5 + 9.5 * (0.5 * 905 - 5) / 895)

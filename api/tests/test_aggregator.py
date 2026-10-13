@@ -224,3 +224,43 @@ async def test_daily_weighted_by_count(agg, db):
     assert d["sum"] == pytest.approx(100_010.0)
     # p95: взвешенное среднее часовых p95 (по count)
     assert d["p95"] == pytest.approx(100_010 / 101)
+
+
+async def test_daily_p95_ignores_null_p95_hours(agg, db):
+    """Суточный p95 — взвешенное среднее только часов с не-NULL p95:
+    часы с p95 NULL (разрыв) не включаются своим count в знаменатель,
+    иначе занижение (инвариант: пропуски не заменяются нулями)."""
+    rows = []
+    for h in range(8):  # 8 часовых строк (>= MIN_HOURLY_PER_DAY)
+        rows.append(("m", DAY + h * 3600 + 1800, float(h + 1), "system", None, None))
+    await seed_samples_aio(db, rows)
+    await agg._aggregate_hourly(NOW)
+    # у часов 4..7 p95 NULL (разрыв данных)
+    await db.execute(
+        "UPDATE metric_hourly SET p95 = NULL WHERE metric = 'm' AND hour >= ?",
+        (DAY + 4 * 3600,),
+    )
+    await db.commit()
+    await agg._aggregate_daily(NOW)
+    d = dict((await db.execute_fetchall("SELECT * FROM metric_daily WHERE metric='m'"))[0])
+    # count и avg — по всем часам (значения 1..8)
+    assert d["count"] == 8
+    assert d["avg"] == pytest.approx(4.5)
+    # p95: только часы 0..3 (значения 1..4, count по 1): (1+2+3+4)/4 = 2.5
+    # (занесённый в знаменатель всех часов вариант был бы 10/8 = 1.25)
+    assert d["p95"] == pytest.approx(2.5)
+
+
+async def test_daily_p95_all_null_hours(agg, db):
+    """Все часовые p95 NULL → суточный p95 NULL (разрыв, не 0)."""
+    rows = []
+    for h in range(6):
+        rows.append(("m", DAY + h * 3600 + 1800, float(h + 1), "system", None, None))
+    await seed_samples_aio(db, rows)
+    await agg._aggregate_hourly(NOW)
+    await db.execute("UPDATE metric_hourly SET p95 = NULL WHERE metric = 'm'")
+    await db.commit()
+    await agg._aggregate_daily(NOW)
+    d = dict((await db.execute_fetchall("SELECT * FROM metric_daily WHERE metric='m'"))[0])
+    assert d["count"] == 6
+    assert d["p95"] is None
