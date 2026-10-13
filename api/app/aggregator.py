@@ -192,19 +192,25 @@ class Aggregator:
                     await self.conn.execute_fetchall(
                         f"""SELECT min(min) AS mn, max(max) AS mx,
                                    SUM(avg * count) AS sm, SUM(count) AS ct,
-                                   SUM(p95 * count) AS p95w
+                                   SUM(p95 * count) AS p95w,
+                                   SUM(CASE WHEN p95 IS NOT NULL
+                                            THEN count ELSE 0 END) AS p95ct
                            FROM metric_hourly WHERE metric = ? AND hour >= ? AND hour < ?{gcond}{mcond}""",
                         (row["metric"], day, day + 86400, *gparams, *mparams),
                     )
                 )[0]
                 if not s["ct"]:
                     continue
+                # суточный p95 — взвешенное среднее ТОЛЬКО часов с не-NULL p95:
+                # NULL-часы (разрыв) не должны попадать в знаменатель своим
+                # count — иначе занижение (инвариант: пропуски не заменяются)
+                p95 = s["p95w"] / s["p95ct"] if s["p95ct"] else None
                 await self.conn.execute(
                     """INSERT INTO metric_daily
                          (metric, day, gpu, model, avg, min, max, p95, sum, count)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (row["metric"], day, gpu, model, s["sm"] / s["ct"], s["mn"], s["mx"],
-                     s["p95w"] / s["ct"], s["sm"], s["ct"]),
+                     p95, s["sm"], s["ct"]),
                 )
                 written += 1
         await self.conn.commit()
