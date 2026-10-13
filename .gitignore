@@ -36,3 +36,8 @@ docs/screenshots/
 
 # pipeline-состояние агента (локально)
 .pi/
+
+# рабочие артефакты агентов pipeline
+task.md
+worker_roles.md
+worker_prompt_addition.md
