@@ -34,6 +34,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import time
 from dataclasses import dataclass
@@ -46,6 +47,8 @@ from .percentile import percentile_from_buckets
 from .prom_parser import parse_prometheus
 
 __all__ = ["Sample", "VllmCollector", "VllmError"]
+
+log = logging.getLogger(__name__)
 
 # (logical_name, [кандидаты имён метрик], масштаб)
 GAUGES: list[tuple[str, list[str], float]] = [
@@ -332,6 +335,15 @@ class VllmCollector:
                             grids.values(),
                             key=lambda g: g[max(g)],
                         )
+                        if len(grids) > 1:
+                            log.warning(
+                                "%s: наборов границ buckets %d — данные engine "
+                                "с чужими le отброшены (оставлен доминирующий, "
+                                "count=%s)",
+                                base,
+                                len(grids),
+                                chosen[max(chosen)],
+                            )
                         buckets = sorted(chosen.items())
                     if buckets:
                         break

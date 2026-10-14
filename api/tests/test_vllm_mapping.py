@@ -246,7 +246,7 @@ def test_histogram_percentiles_multi_engine():
     assert m["ttft_p50"].value == pytest.approx(0.5 + 0.5 * (126.5 - 100) / 150)
 
 
-def test_histogram_percentiles_foreign_boundaries_dropped():
+def test_histogram_percentiles_foreign_boundaries_dropped(caplog):
     """Немонотонный кейс: у engine разные наборы границ le (разный
     bucket-config). Сумма counts по объединению le даёт немонотонный
     кумулятивный ряд (0.5: 9 → 1.0: 6) → неверный квантиль. Engine'ы
@@ -274,3 +274,5 @@ def test_histogram_percentiles_foreign_boundaries_dropped():
     assert m["ttft_p95"].value == pytest.approx(0.5 + 9.5 * (0.95 * 905 - 5) / 895)
     # p50: доля 452.5 → 0.5 + 9.5*(452.5-5)/(900-5) = 5.25
     assert m["ttft_p50"].value == pytest.approx(0.5 + 9.5 * (0.5 * 905 - 5) / 895)
+    # отбрасывание чужих grids не молча — предупреждение в логе
+    assert any("чужими le" in r.message for r in caplog.records)
