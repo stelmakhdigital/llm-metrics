@@ -38,10 +38,12 @@ async def test_tail_append_rotate_delete(env):
         env["tailer"], env["file"], env["statuses"], env["buffer"]
     )
 
-    # первая встреча файла — старт с конца: старая строка не индексируется
+    # первая встреча файла — история читается с начала: старая строка
+    # уже в БД (после рестарта api лог не теряет историю)
     await tailer.poll_once()
+    await tailer.flush(force=True)
     assert statuses["logs.t"].status == "online"
-    assert len(await _rows(tailer.db)) == 0
+    assert len(await _rows(tailer.db)) == 1
 
     with f.open("a") as fh:
         fh.write("2026-07-25 12:00:00,123 [INFO] uvicorn hello\n")
@@ -59,20 +61,21 @@ async def test_tail_append_rotate_delete(env):
     rows = await db.execute_fetchall(
         "SELECT ts, level, source, line FROM log_entries ORDER BY id"
     )
-    assert len(rows) == 4
-    assert rows[0]["level"] == "INFO" and "uvicorn hello" in rows[0]["line"]
-    assert rows[1]["level"] == "INFO" and "Running: 3 reqs" in rows[1]["line"]
-    assert rows[2]["level"] == "WARNING"
-    assert rows[3]["level"] == "INFO"  # мусор без уровня → INFO
+    assert len(rows) == 5
+    assert rows[0]["level"] == "INFO" and "first line" in rows[0]["line"]
+    assert rows[1]["level"] == "INFO" and "uvicorn hello" in rows[1]["line"]
+    assert rows[2]["level"] == "INFO" and "Running: 3 reqs" in rows[2]["line"]
+    assert rows[3]["level"] == "WARNING"
+    assert rows[4]["level"] == "INFO"  # мусор без уровня → INFO
     assert all(r["source"] == "t" for r in rows)
     # буфер для SSE: id заполнены, порядок сохраняется
-    assert len(buffer) == 4
-    assert [e["id"] for e in buffer.all()] == [1, 2, 3, 4]
+    assert len(buffer) == 5
+    assert [e["id"] for e in buffer.all()] == [1, 2, 3, 4, 5]
 
     # повторный poll без новых строк — ничего не дублируется
     await tailer.poll_once()
     await tailer.flush(force=True)
-    assert len(await _rows(db)) == 4
+    assert len(await _rows(db)) == 5
 
     # ротация: файл переименован, создан новый — читаем новый с начала
     rotated = f.with_suffix(".1")
@@ -84,7 +87,7 @@ async def test_tail_append_rotate_delete(env):
         "SELECT level, line FROM log_entries ORDER BY id DESC LIMIT 1"
     )
     assert rows[0]["level"] == "ERROR" and "after rotate" in rows[0]["line"]
-    assert len(await _rows(db)) == 5
+    assert len(await _rows(db)) == 6
 
     # удаление файла — источник offline, приложение живёт
     os.remove(f)
@@ -92,6 +95,25 @@ async def test_tail_append_rotate_delete(env):
     st = statuses["logs.t"]
     assert st.status == "offline"
     assert "файл отсутствует" in st.last_error
+
+
+async def test_bootstrap_oversized_file_starts_at_eof(env, monkeypatch):
+    """Flood-защита: файл больше LOG_BOOTSTRAP_MAX_BYTES — старт с конца
+    (старая история не индексируется), новые строки индексируются штатно."""
+    import app.logs.tailer as tmod
+
+    monkeypatch.setattr(tmod, "LOG_BOOTSTRAP_MAX_BYTES", 8)  # 26 байт > капа
+    tailer, f = env["tailer"], env["file"]
+    await tailer.poll_once()
+    await tailer.flush(force=True)
+    assert len(await _rows(tailer.db)) == 0  # история за капом не читается
+
+    with f.open("a") as fh:
+        fh.write("2026-07-25 12:00:00,123 [INFO] appended after boot\n")
+    await tailer.poll_once()
+    await tailer.flush(force=True)
+    rows = await _rows(tailer.db)
+    assert len(rows) == 1 and "appended after boot" in rows[0]["line"]
 
 
 async def test_retention_purge(db, db_path):

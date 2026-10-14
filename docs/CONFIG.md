@@ -28,6 +28,7 @@
 | `LOG_SOURCE_PATH` | `/var/log/vllm/vllm.log` | путь в контейнере api (bind-ro хост-каталога) |
 | `LOG_SOURCE_CONTAINER` | — | имя контейнера (при `TYPE=docker`) |
 | `LOG_POLL_S` | 1 | период чтения лога, с |
+| `LOG_BOOTSTRAP_MAX_BYTES` | `10485760` (10 МБ) | при первой встрече файла его история читается с начала (не теряется после рестарта api); файлы больше капа — старт с конца (flood-защита) |
 | `LOG_RETENTION_DAYS` | 14 | ретенция проиндексированных строк, дней |
 | **БД и ретенция** | | |
 | `SQLITE_PATH` | `/data/metrics.db` | путь БД в контейнере api (volume `./data`) |

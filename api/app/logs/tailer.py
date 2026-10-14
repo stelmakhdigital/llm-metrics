@@ -43,6 +43,12 @@ __all__ = ["LogTailer", "LogLineBuffer", "purge_old_logs"]
 #: Пороги флеша буфера (строки/возраст)
 FLUSH_MAX_LINES = 500
 FLUSH_MAX_AGE_S = 1.0
+# Первая встреча файла: история читается с начала (после рестарта api
+# старая часть лога не должна выпадать из UI). Файлы больше капа читаем
+# с конца — flood-защита на огромных логах (logrotate капирует в 100 МБ).
+LOG_BOOTSTRAP_MAX_BYTES = int(
+    os.environ.get("LOG_BOOTSTRAP_MAX_BYTES", 10 * 1024 * 1024)
+)
 #: Период повторных попыток docker-источника при ошибке
 DOCKER_RETRY_S = 60.0
 #: Батч удаления ретенцией
@@ -76,7 +82,7 @@ class LogLineBuffer:
 class _FileState:
     offset: int = 0
     inode: int | None = None
-    initialized: bool = False  # первая встреча — старт с конца файла
+    initialized: bool = False  # первая встреча — чтение с начала (см. кап)
 
 
 @dataclass
@@ -191,9 +197,16 @@ class LogTailer:
             # Ротация (смена inode) или truncate — новый файл читаем с начала
             st.offset, st.inode = 0, info.st_ino
         if not st.initialized:
-            # Первая встреча: старт с конца (не индексировать старую историю)
-            st.offset, st.inode, st.initialized = info.st_size, info.st_ino, True
-            return []
+            # Первая встреча: индексируем историю с начала файла — иначе
+            # после рестарта api вся старая часть лога выпадает из UI
+            # (bug report: maya ~4 тыс. строк, в БД попадали только новые).
+            # Файлы больше LOG_BOOTSTRAP_MAX_BYTES читаем с конца
+            # (flood-защита: старое поведение).
+            st.inode, st.initialized = info.st_ino, True
+            if info.st_size > LOG_BOOTSTRAP_MAX_BYTES:
+                st.offset = info.st_size
+                return []
+            st.offset = 0
         lines: list[str] = []
         with open(path, "rb") as f:
             f.seek(st.offset)
