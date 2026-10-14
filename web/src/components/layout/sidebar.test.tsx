@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Sidebar } from "./sidebar";
 
@@ -13,8 +13,9 @@ function renderSidebar() {
 }
 
 function mobileItems() {
-  // мобильные пункты нижней панели отличаются классом min-h-12 (десктопные — size-10)
-  return screen.getAllByRole("link").filter((el) => el.className.includes("min-h-12"));
+  // мобильные пункты — внутри нижней панели (устойчивый testid вместо
+  // эвристики по классам, ломающейся при рефакторинге)
+  return within(screen.getByTestId("mobile-nav")).getAllByRole("link");
 }
 
 describe("Sidebar — мобильная нижняя панель (NavItemMobile)", () => {

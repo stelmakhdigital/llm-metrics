@@ -107,7 +107,10 @@ export function Sidebar() {
 
       {/* Mobile (<md): нижняя панель навигации; >8 пунктов — компактные
           иконки без подписей + горизонтальная прокрутка с аффордансностью */}
-      <nav className="fixed inset-x-0 bottom-0 z-30 flex items-stretch overflow-x-auto border-t border-line bg-panel pb-[env(safe-area-inset-bottom)] md:hidden">
+      <nav
+        data-testid="mobile-nav"
+        className="fixed inset-x-0 bottom-0 z-30 flex items-stretch overflow-x-auto border-t border-line bg-panel pb-[env(safe-area-inset-bottom)] md:hidden"
+      >
         {ALL_NAV.map((item) => (
           <NavItemMobile key={item.href} compact={ALL_NAV.length > 8} {...item} />
         ))}
